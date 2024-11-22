@@ -1,0 +1,27 @@
+/* Copyright (c) 2022-2024 4Players GmbH. All rights reserved. */
+
+#pragma once
+
+#include "Modules/ModuleManager.h"
+
+DECLARE_LOG_CATEGORY_EXTERN(Odin, Log, All);
+
+#define ODIN_GENERAL_CLIENT_ERROR_CODE (7u << 29)
+
+class ODIN_API FOdinModule : public IModuleInterface
+{
+  public:
+    virtual void StartupModule() override;
+    virtual void ShutdownModule() override;
+
+    /**
+     * Log an error code with a specified prefix.
+     *
+     * @param Prefix The prefix to be included in the log message.
+     * @param ErrorCode The Odin error code that should be formatted and logged.
+     */
+    static void LogErrorCode(FString Prefix, uint32_t ErrorCode);
+
+  private:
+    void* OdinLibraryHandle = nullptr;
+};
