@@ -47,16 +47,14 @@ void UOdinClientComponent::BeginPlay()
 	
 	room->onPeerJoined.AddUniqueDynamic(this, &UOdinClientComponent::OnPeerJoinedHandler);
 	room->onMediaAdded.AddUniqueDynamic(this, &UOdinClientComponent::OnMediaAddedHandler);
-	OnRoomJoinSuccess.BindUFunction(this, TEXT("OnRoomJoinedHandler"));
+	OnRoomJoinSuccess.BindUFunction(this, TEXT("OnRoomJoinedHandler")); 
+	OnRoomJoinError.BindUFunction(this, TEXT("OnOdinErrorHandler"));
 
 	TArray<uint8> userData = { 0 };
 
 	UOdinRoomJoin* Action = UOdinRoomJoin::JoinRoom(this, room, TEXT("https://gateway.odin.4players.io"), roomToken, userData, FVector(0, 0, 0), OnRoomJoinError, OnRoomJoinSuccess);
 	Action->Activate();
 }
-
-
-
 
 void UOdinClientComponent::OnPeerJoinedHandler(int64 peerId, FString userId, const TArray<uint8>& userData, UOdinRoom* joinedRoom)
 {
@@ -80,18 +78,29 @@ void UOdinClientComponent::OnRoomJoinedHandler(int64 peerId, const TArray<uint8>
 {
 	UE_LOG(LogTemp, Warning, TEXT("Joined Room"));
 
-	capture = (UAudioCapture*)UOdinFunctionLibrary::CreateOdinAudioCapture(this);
+	capture = UOdinFunctionLibrary::CreateOdinAudioCapture(this);
 
+	// cast pointer to capture to UAudioGenerator for Odin_CreateMedia
 	UAudioGenerator* captureAsGenerator = (UAudioGenerator*)capture;
 
 	auto media = UOdinFunctionLibrary::Odin_CreateMedia(captureAsGenerator);
 
-	UOdinRoomAddMedia* Action = UOdinRoomAddMedia::AddMedia(this, room, media, OnAddMediaError, OnAddMediaSuccess);
 
+	OnAddMediaError.BindUFunction(this, TEXT("OnOdinErrorHandler"));
+
+	UOdinRoomAddMedia* Action = UOdinRoomAddMedia::AddMedia(this, room, media, OnAddMediaError, OnAddMediaSuccess)
 	Action->Activate();
 
 	capture->StartCapturingAudio();
 }
+
+void UOdinClientComponent::OnOdinErrorHandler(int64 errorCode)
+{
+	FString errorString = UOdinFunctionLibrary::FormatError(errorCode, true);
+	UE_LOG(LogTemp, Error, TEXT("%S"), *errorString);
+}
+
+
 
 // Called every frame
 void UOdinClientComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)

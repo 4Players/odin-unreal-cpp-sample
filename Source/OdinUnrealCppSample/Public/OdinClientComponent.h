@@ -5,7 +5,7 @@
 #include "OdinTokenGenerator.h"
 #include "OdinRoom.h"
 #include "CoreMinimal.h"
-#include "AudioCapture.h"
+#include "OdinAudioCapture.h"
 #include "Components/ActorComponent.h"
 #include "OdinClientComponent.generated.h"
 
@@ -40,13 +40,16 @@ protected:
 	UFUNCTION()
 	void OnRoomJoinedHandler(int64 peerId, const TArray<uint8>& roomUserData, UOdinRoom* room);
 
+	UFUNCTION()
+	void OnOdinErrorHandler(int64 errorCode);
+
 	FOdinRoomJoinError OnRoomJoinError;
 	FOdinRoomJoinSuccess OnRoomJoinSuccess;
 
 	FOdinRoomAddMediaError OnAddMediaError;
 	FOdinRoomAddMediaSuccess OnAddMediaSuccess;
 
-	UAudioCapture* capture;
+	UOdinAudioCapture* capture;
 
 public:	
 	// Called every frame
