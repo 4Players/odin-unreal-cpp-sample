@@ -7,7 +7,6 @@
 #include "AudioCaptureBlueprintLibrary.h"
 #include "OdinFunctionLibrary.h"
 #include "OdinJsonObject.h"
-#include "OdinJsonValue.h"
 #include "OdinGameInstance.h"
 
 // Sets default values for this component's properties
@@ -67,7 +66,7 @@ void UOdinClientComponent::OnMediaAddedHandler(int64 peerId, UOdinPlaybackMedia*
 	synth->bOverrideAttenuation = true;
 	synth->AttenuationOverrides.bAttenuate = true;
 
-	// more attenuation settings
+	// more attenuation settings as desired
 
 	synth->Activate();
 
