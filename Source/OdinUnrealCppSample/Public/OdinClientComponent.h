@@ -23,22 +23,26 @@ protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
 
+	UPROPERTY()
 	UOdinTokenGenerator* tokenGenerator;
 
+	UPROPERTY()
 	FString roomToken;
 
+	UPROPERTY()
 	UOdinRoom* room;
 
+	UPROPERTY()
 	FOdinApmSettings apmSettings;
 
 	UFUNCTION()
-	void OnPeerJoinedHandler(int64 peerId, FString userId, const TArray<uint8>& userData, UOdinRoom* room);
+	void OnPeerJoinedHandler(int64 peerId, FString userId, const TArray<uint8>& userData, UOdinRoom* odinRoom);
 
 	UFUNCTION()
-	void OnMediaAddedHandler(int64 peerId, UOdinPlaybackMedia* media, UOdinJsonObject* properties, UOdinRoom* room);
+	void OnMediaAddedHandler(int64 peerId, UOdinPlaybackMedia* media, UOdinJsonObject* properties, UOdinRoom* odinRoom);
 
 	UFUNCTION()
-	void OnRoomJoinedHandler(int64 peerId, const TArray<uint8>& roomUserData, UOdinRoom* room);
+	void OnRoomJoinedHandler(int64 peerId, const TArray<uint8>& roomUserData, UOdinRoom* odinRoom);
 
 	UFUNCTION()
 	void OnOdinErrorHandler(int64 errorCode);
@@ -49,11 +53,12 @@ protected:
 	FOdinRoomAddMediaError OnAddMediaError;
 	FOdinRoomAddMediaSuccess OnAddMediaSuccess;
 
+	UPROPERTY()
 	UOdinAudioCapture* capture;
 
 public:	
 	// Called every frame
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	
+	void ConnectToOdin(FGuid playerId);
 };

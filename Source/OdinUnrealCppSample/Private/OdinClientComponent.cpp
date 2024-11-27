@@ -6,6 +6,9 @@
 #include "OdinSynthComponent.h"
 #include "AudioCaptureBlueprintLibrary.h"
 #include "OdinFunctionLibrary.h"
+#include "OdinJsonObject.h"
+#include "OdinJsonValue.h"
+#include "OdinGameInstance.h"
 
 // Sets default values for this component's properties
 UOdinClientComponent::UOdinClientComponent()
@@ -14,15 +17,91 @@ UOdinClientComponent::UOdinClientComponent()
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
 
+	SetIsReplicatedByDefault(true);
+
 	// ...
 }
+
+
 
 
 // Called when the game starts
 void UOdinClientComponent::BeginPlay()
 {
 	Super::BeginPlay();
+}
 
+void UOdinClientComponent::OnPeerJoinedHandler(int64 peerId, FString userId, const TArray<uint8>& userData, UOdinRoom* odinRoom)
+{
+	auto json = UOdinJsonObject::ConstructJsonObjectFromBytes(this, userData);
+
+	FString guidString = json->GetStringField(TEXT("PlayerId"));
+
+	UE_LOG(LogTemp, Warning, TEXT("Peer with PlayerId %s joined. Trying to map to player character ..."), *guidString);
+
+	FGuid guid = FGuid();
+	if (FGuid::Parse(guidString, guid))
+	{
+
+		UOdinGameInstance* gameInstance = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this));
+
+		ACharacter* character = gameInstance->PlayerCharacters[guid];
+		gameInstance->OdinPlayerCharacters.Add(peerId, character);
+
+		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined"), *userId);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined, but could not be mapped to a player."), *userId);
+	}
+}
+
+void UOdinClientComponent::OnMediaAddedHandler(int64 peerId, UOdinPlaybackMedia* media, UOdinJsonObject* properties, UOdinRoom* odinRoom)
+{
+	ACharacter* player = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this))->OdinPlayerCharacters[peerId];
+	UActorComponent* comp = player->AddComponentByClass(UOdinSynthComponent::StaticClass(), false, FTransform::Identity, false);
+	UOdinSynthComponent* synth = StaticCast<UOdinSynthComponent*>(comp);
+
+	synth->Odin_AssignSynthToMedia(media);
+
+	synth->bOverrideAttenuation = true;
+	synth->AttenuationOverrides.bAttenuate = true;
+
+	// more attenuation settings
+
+	synth->Activate();
+
+	UE_LOG(LogTemp, Warning, TEXT("Odin Synth Added"));
+}
+
+void UOdinClientComponent::OnRoomJoinedHandler(int64 peerId, const TArray<uint8>& roomUserData, UOdinRoom* odinRoom)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Joined Room"));
+
+	capture = UOdinFunctionLibrary::CreateOdinAudioCapture(this);
+
+	// cast pointer to capture to UAudioGenerator for Odin_CreateMedia
+	UAudioGenerator* captureAsGenerator = (UAudioGenerator*)capture;
+
+	auto media = UOdinFunctionLibrary::Odin_CreateMedia(captureAsGenerator);
+
+
+	OnAddMediaError.BindUFunction(this, TEXT("OnOdinErrorHandler"));
+
+	UOdinRoomAddMedia* Action = UOdinRoomAddMedia::AddMedia(this, room, media, OnAddMediaError, OnAddMediaSuccess);
+	Action->Activate();
+
+	capture->StartCapturingAudio();
+}
+
+void UOdinClientComponent::OnOdinErrorHandler(int64 errorCode)
+{
+	FString errorString = UOdinFunctionLibrary::FormatError(errorCode, true);
+	UE_LOG(LogTemp, Error, TEXT("%s"), *errorString);
+}
+
+void UOdinClientComponent::ConnectToOdin(FGuid playerId)
+{
 	tokenGenerator = UOdinTokenGenerator::ConstructTokenGenerator(this, "AQGEYTtGuFdlq6Msk+bO9ki6dDJ+fG8UmjfZD+VZOuUt");
 
 	roomToken = tokenGenerator->GenerateRoomToken("Test", "Player", EOdinTokenAudience::Default);
@@ -44,60 +123,21 @@ void UOdinClientComponent::BeginPlay()
 	apmSettings.bEchoCanceller = true;
 
 	room = UOdinRoom::ConstructRoom(this, apmSettings);
-	
+
 	room->onPeerJoined.AddUniqueDynamic(this, &UOdinClientComponent::OnPeerJoinedHandler);
 	room->onMediaAdded.AddUniqueDynamic(this, &UOdinClientComponent::OnMediaAddedHandler);
-	OnRoomJoinSuccess.BindUFunction(this, TEXT("OnRoomJoinedHandler")); 
+	OnRoomJoinSuccess.BindUFunction(this, TEXT("OnRoomJoinedHandler"));
 	OnRoomJoinError.BindUFunction(this, TEXT("OnOdinErrorHandler"));
 
-	TArray<uint8> userData = { 0 };
+	UE_LOG(LogTemp, Warning, TEXT("Joining Room with PlayerId: %s"), *playerId.ToString())
+
+	auto json = UOdinJsonObject::ConstructJsonObject(this);
+	json->SetStringField(TEXT("PlayerId"), *playerId.ToString());
+
+	TArray<uint8> userData = json->EncodeJsonBytes();
 
 	UOdinRoomJoin* Action = UOdinRoomJoin::JoinRoom(this, room, TEXT("https://gateway.odin.4players.io"), roomToken, userData, FVector(0, 0, 0), OnRoomJoinError, OnRoomJoinSuccess);
 	Action->Activate();
-}
-
-void UOdinClientComponent::OnPeerJoinedHandler(int64 peerId, FString userId, const TArray<uint8>& userData, UOdinRoom* joinedRoom)
-{
-	UE_LOG(LogTemp, Warning, TEXT("Peer %s joined"), *userId);
-}
-
-void UOdinClientComponent::OnMediaAddedHandler(int64 peerId, UOdinPlaybackMedia* media, UOdinJsonObject* properties, UOdinRoom* addedInRoom)
-{
-	ACharacter* player = UGameplayStatics::GetPlayerCharacter(this, 0);
-	UActorComponent* comp = player->AddComponentByClass(UOdinSynthComponent::StaticClass(), false, FTransform::Identity, false);
-	UOdinSynthComponent* synth = StaticCast<UOdinSynthComponent*>(comp);
-
-	synth->Odin_AssignSynthToMedia(media);
-
-	synth->Activate();
-
-	UE_LOG(LogTemp, Warning, TEXT("Odin Synth Added"));
-}
-
-void UOdinClientComponent::OnRoomJoinedHandler(int64 peerId, const TArray<uint8>& roomUserData, UOdinRoom* joinedRoom)
-{
-	UE_LOG(LogTemp, Warning, TEXT("Joined Room"));
-
-	capture = UOdinFunctionLibrary::CreateOdinAudioCapture(this);
-
-	// cast pointer to capture to UAudioGenerator for Odin_CreateMedia
-	UAudioGenerator* captureAsGenerator = (UAudioGenerator*)capture;
-
-	auto media = UOdinFunctionLibrary::Odin_CreateMedia(captureAsGenerator);
-
-
-	OnAddMediaError.BindUFunction(this, TEXT("OnOdinErrorHandler"));
-
-	UOdinRoomAddMedia* Action = UOdinRoomAddMedia::AddMedia(this, room, media, OnAddMediaError, OnAddMediaSuccess)
-	Action->Activate();
-
-	capture->StartCapturingAudio();
-}
-
-void UOdinClientComponent::OnOdinErrorHandler(int64 errorCode)
-{
-	FString errorString = UOdinFunctionLibrary::FormatError(errorCode, true);
-	UE_LOG(LogTemp, Error, TEXT("%S"), *errorString);
 }
 
 
