@@ -72,3 +72,8 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+
+!Plugins/**/Source/**/*.so
+!Plugins/**/Source/**/*.a
+!Plugins/**/Source/**/*.dll
+!Plugins/**/Source/**/*.lib
