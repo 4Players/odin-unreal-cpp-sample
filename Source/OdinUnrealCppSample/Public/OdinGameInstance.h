@@ -6,15 +6,14 @@
 #include "Engine/GameInstance.h"
 #include "OdinGameInstance.generated.h"
 
-/**
- * 
- */
 UCLASS()
 class ODINUNREALCPPSAMPLE_API UOdinGameInstance : public UGameInstance
 {
 	GENERATED_BODY()
 
 public:
+	UPROPERTY()
 	TMap<FGuid, ACharacter*> PlayerCharacters;
+	UPROPERTY()
 	TMap<int64, ACharacter*> OdinPlayerCharacters;
 };

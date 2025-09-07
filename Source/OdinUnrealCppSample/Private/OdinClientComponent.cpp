@@ -17,11 +17,7 @@ UOdinClientComponent::UOdinClientComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 
 	SetIsReplicatedByDefault(true);
-
-	// ...
 }
-
-
 
 
 // Called when the game starts
@@ -30,122 +26,120 @@ void UOdinClientComponent::BeginPlay()
 	Super::BeginPlay();
 }
 
-void UOdinClientComponent::OnPeerJoinedHandler(int64 peerId, FString userId, const TArray<uint8>& userData, UOdinRoom* odinRoom)
+void UOdinClientComponent::OnPeerJoinedHandler(int64 PeerId, FString UserId, const TArray<uint8>& UserData,
+                                               UOdinRoom* OdinRoom)
 {
-	auto json = UOdinJsonObject::ConstructJsonObjectFromBytes(this, userData);
+	const auto JSON = UOdinJsonObject::ConstructJsonObjectFromBytes(this, UserData);
 
-	FString guidString = json->GetStringField(TEXT("PlayerId"));
+	const FString GUIDString = JSON->GetStringField(TEXT("PlayerId"));
 
-	UE_LOG(LogTemp, Warning, TEXT("Peer with PlayerId %s joined. Trying to map to player character ..."), *guidString);
+	UE_LOG(LogTemp, Warning, TEXT("Peer with PlayerId %s joined. Trying to map to player character ..."), *GUIDString);
 
-	FGuid guid = FGuid();
-	if (FGuid::Parse(guidString, guid))
+	FGuid GUID = FGuid();
+	if (FGuid::Parse(GUIDString, GUID))
 	{
+		UOdinGameInstance* GameInstance = Cast<UOdinGameInstance>(UGameplayStatics::GetGameInstance(this));
+		if (!GameInstance)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Received Game Instance of invalid type, please use a UOdinGameInstance."));
+			return;
+		}
 
-		UOdinGameInstance* gameInstance = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this));
+		ACharacter* Character = GameInstance->PlayerCharacters[GUID];
+		GameInstance->OdinPlayerCharacters.Add(PeerId, Character);
 
-		ACharacter* character = gameInstance->PlayerCharacters[guid];
-		gameInstance->OdinPlayerCharacters.Add(peerId, character);
-
-		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined"), *userId);
+		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined"), *UserId);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined, but could not be mapped to a player."), *userId);
+		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined, but could not be mapped to a player."), *UserId);
 	}
 }
 
-void UOdinClientComponent::OnMediaAddedHandler(int64 peerId, UOdinPlaybackMedia* media, UOdinJsonObject* properties, UOdinRoom* odinRoom)
+void UOdinClientComponent::OnMediaAddedHandler(int64 PeerId, UOdinPlaybackMedia* Media, UOdinJsonObject* Properties,
+                                               UOdinRoom* OdinRoom)
 {
-	ACharacter* player = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this))->OdinPlayerCharacters[peerId];
-	UActorComponent* comp = player->AddComponentByClass(UOdinSynthComponent::StaticClass(), false, FTransform::Identity, false);
-	UOdinSynthComponent* synth = StaticCast<UOdinSynthComponent*>(comp);
+	UOdinGameInstance* OdinGameInstance = Cast<UOdinGameInstance>(UGameplayStatics::GetGameInstance(this));
+	if (!OdinGameInstance)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Received Game Instance of invalid type, please use a UOdinGameInstance."));
+		return;
+	}
+	ACharacter* Player = OdinGameInstance->OdinPlayerCharacters[PeerId];
+	UActorComponent* Comp = Player->AddComponentByClass(UOdinSynthComponent::StaticClass(), false, FTransform::Identity,
+	                                                    false);
+	UOdinSynthComponent* Synth = Cast<UOdinSynthComponent>(Comp);
 
-	synth->Odin_AssignSynthToMedia(media);
+	Synth->Odin_AssignSynthToMedia(Media);
 
-	synth->bOverrideAttenuation = true;
-	synth->AttenuationOverrides.bAttenuate = true;
-
-	// more attenuation settings as desired
-
-	synth->Activate();
+	FSoundAttenuationSettings AttenuationSettings;
+	AttenuationSettings.bSpatialize = true;
+	AttenuationSettings.bAttenuate = true;
+	// Continue with more attenuation settings
+	Synth->AdjustAttenuation(AttenuationSettings);
 
 	UE_LOG(LogTemp, Warning, TEXT("Odin Synth Added"));
 }
 
-void UOdinClientComponent::OnRoomJoinedHandler(int64 peerId, const TArray<uint8>& roomUserData, UOdinRoom* odinRoom)
+void UOdinClientComponent::OnRoomJoinSuccessHandler(FString RoomId, const TArray<uint8>& RoomUserData, FString Customer,
+                                                    int64 OwnPeerId, FString OwnUserId)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Joined Room"));
 
-	capture = UOdinFunctionLibrary::CreateOdinAudioCapture(this);
+	Capture = UOdinFunctionLibrary::CreateOdinAudioCapture(this);
 
 	// cast pointer to capture to UAudioGenerator for Odin_CreateMedia
-	UAudioGenerator* captureAsGenerator = (UAudioGenerator*)capture;
+	UAudioGenerator* CaptureAsGenerator = Cast<UAudioGenerator>(Capture);
+	auto Media = UOdinFunctionLibrary::Odin_CreateMedia(CaptureAsGenerator);
+	
+	OnAddMediaError.BindDynamic(this, &UOdinClientComponent::OnOdinErrorHandler);
 
-	auto media = UOdinFunctionLibrary::Odin_CreateMedia(captureAsGenerator);
-
-
-	OnAddMediaError.BindUFunction(this, TEXT("OnOdinErrorHandler"));
-
-	UOdinRoomAddMedia* Action = UOdinRoomAddMedia::AddMedia(this, room, media, OnAddMediaError, OnAddMediaSuccess);
+	UOdinRoomAddMedia* Action = UOdinRoomAddMedia::AddMedia(this, Room, Media, OnAddMediaError, OnAddMediaSuccess);
 	Action->Activate();
 
-	capture->StartCapturingAudio();
+	Capture->StartCapturingAudio();
 }
 
-void UOdinClientComponent::OnOdinErrorHandler(int64 errorCode)
+void UOdinClientComponent::OnOdinErrorHandler(int64 ErrorCode)
 {
-	FString errorString = UOdinFunctionLibrary::FormatError(errorCode, true);
-	UE_LOG(LogTemp, Error, TEXT("%s"), *errorString);
+	const FString ErrorString = UOdinFunctionLibrary::FormatError(ErrorCode, true);
+	UE_LOG(LogTemp, Error, TEXT("%s"), *ErrorString);
 }
 
-void UOdinClientComponent::ConnectToOdin(FGuid playerId)
+void UOdinClientComponent::ConnectToOdin(FGuid PlayerId)
 {
-	tokenGenerator = UOdinTokenGenerator::ConstructTokenGenerator(this, "AQGEYTtGuFdlq6Msk+bO9ki6dDJ+fG8UmjfZD+VZOuUt");
+	TokenGenerator = UOdinTokenGenerator::ConstructTokenGenerator(this, "AQGEYTtGuFdlq6Msk+bO9ki6dDJ+fG8UmjfZD+VZOuUt");
 
-	roomToken = tokenGenerator->GenerateRoomToken("Test", "Player", EOdinTokenAudience::Default);
+	RoomToken = TokenGenerator->GenerateRoomToken("Test", "Player", EOdinTokenAudience::Default);
 
-	UE_LOG(LogTemp, Warning, TEXT("%s"), *roomToken);
+	UE_LOG(LogTemp, Warning, TEXT("%s"), *RoomToken);
 
-	apmSettings = FOdinApmSettings();
+	ApmSettings = FOdinApmSettings();
 
-	apmSettings.bVoiceActivityDetection = true;
-	apmSettings.fVadAttackProbability = 0.9;
-	apmSettings.fVadReleaseProbability = 0.8;
-	apmSettings.bEnableVolumeGate = false;
-	apmSettings.fVolumeGateAttackLoudness = -90.0;
-	apmSettings.fVolumeGateReleaseLoudness = -90.0;
-	apmSettings.bHighPassFilter = false;
-	apmSettings.bPreAmplifier = false;
-	apmSettings.noise_suppression_level = EOdinNoiseSuppressionLevel::OdinNS_Moderate;
-	apmSettings.bTransientSuppresor = false;
-	apmSettings.bEchoCanceller = true;
+	ApmSettings.bVoiceActivityDetection = true;
+	ApmSettings.fVadAttackProbability = 0.7;
+	ApmSettings.fVadReleaseProbability = 0.6;
+	ApmSettings.bEnableVolumeGate = false;
+	ApmSettings.bHighPassFilter = false;
+	ApmSettings.GainControllerVersion = EOdinGainControllerVersion::V2;
+	ApmSettings.noise_suppression_level = EOdinNoiseSuppressionLevel::OdinNS_Moderate;
+	ApmSettings.bTransientSuppresor = false;
+	ApmSettings.bEchoCanceller = true;
 
-	room = UOdinRoom::ConstructRoom(this, apmSettings);
+	Room = UOdinRoom::ConstructRoom(this, ApmSettings);
 
-	room->onPeerJoined.AddUniqueDynamic(this, &UOdinClientComponent::OnPeerJoinedHandler);
-	room->onMediaAdded.AddUniqueDynamic(this, &UOdinClientComponent::OnMediaAddedHandler);
-	OnRoomJoinSuccess.BindUFunction(this, TEXT("OnRoomJoinedHandler"));
-	OnRoomJoinError.BindUFunction(this, TEXT("OnOdinErrorHandler"));
+	Room->onPeerJoined.AddUniqueDynamic(this, &UOdinClientComponent::OnPeerJoinedHandler);
+	Room->onMediaAdded.AddUniqueDynamic(this, &UOdinClientComponent::OnMediaAddedHandler);
+	OnRoomJoinSuccess.BindDynamic(this, &UOdinClientComponent::OnRoomJoinSuccessHandler);
+	OnRoomJoinError.BindDynamic(this, &UOdinClientComponent::OnOdinErrorHandler);
 
-	UE_LOG(LogTemp, Warning, TEXT("Joining Room with PlayerId: %s"), *playerId.ToString())
+	UE_LOG(LogTemp, Warning, TEXT("Joining Room with PlayerId: %s"), *PlayerId.ToString())
 
-	auto json = UOdinJsonObject::ConstructJsonObject(this);
-	json->SetStringField(TEXT("PlayerId"), *playerId.ToString());
+	UOdinJsonObject* JSON = UOdinJsonObject::ConstructJsonObject(this);
+	JSON->SetStringField(TEXT("PlayerId"), *PlayerId.ToString());
 
-	TArray<uint8> userData = json->EncodeJsonBytes();
-
-	UOdinRoomJoin* Action = UOdinRoomJoin::JoinRoom(this, room, TEXT("https://gateway.odin.4players.io"), roomToken, userData, FVector(0, 0, 0), OnRoomJoinError, OnRoomJoinSuccess);
+	const TArray<uint8> UserData = JSON->EncodeJsonBytes();
+	UOdinRoomJoin* Action = UOdinRoomJoin::JoinRoom(this, Room, TEXT("https://gateway.odin.4players.io"), RoomToken,
+	                                                UserData, FVector(0, 0, 0), OnRoomJoinError, OnRoomJoinSuccess);
 	Action->Activate();
 }
-
-
-
-// Called every frame
-void UOdinClientComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	// ...
-}
-

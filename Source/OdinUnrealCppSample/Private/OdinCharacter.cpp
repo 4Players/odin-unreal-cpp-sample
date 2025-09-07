@@ -10,9 +10,8 @@
 // Sets default values
 AOdinCharacter::AOdinCharacter()
 {
- 	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
+	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
-
 }
 
 // Called when the game starts or when spawned
@@ -25,15 +24,16 @@ void AOdinCharacter::BeginPlay()
 	{
 		PlayerId = FGuid::NewGuid();
 
-		UOdinGameInstance* gameInstance = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this));
+		UOdinGameInstance* GameInstance = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this));
 
-		gameInstance->PlayerCharacters.Add(PlayerId, this);
+		GameInstance->PlayerCharacters.Add(PlayerId, this);
 
 		UE_LOG(LogTemp, Warning, TEXT("Created PlayerId: %s"), *PlayerId.ToString());
 
 		if (IsLocallyControlled())
 		{
-			UGameplayStatics::GetPlayerControllerFromID(this, 0)->GetComponentByClass<UOdinClientComponent>()->ConnectToOdin(PlayerId);
+			UGameplayStatics::GetPlayerControllerFromID(this, 0)->GetComponentByClass<UOdinClientComponent>()->
+			                                                      ConnectToOdin(PlayerId);
 		}
 	}
 }
@@ -52,15 +52,16 @@ void AOdinCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 
 void AOdinCharacter::OnRep_PlayerId()
 {
-	UOdinGameInstance* gameInstance = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this));
+	UOdinGameInstance* GameInstance = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this));
 
-	gameInstance->PlayerCharacters.Add(PlayerId, this);
+	GameInstance->PlayerCharacters.Add(PlayerId, this);
 
 	UE_LOG(LogTemp, Warning, TEXT("Replicated PlayerId: %s"), *PlayerId.ToString());
 
 	if (IsLocallyControlled())
 	{
-		UGameplayStatics::GetPlayerControllerFromID(this, 0)->GetComponentByClass<UOdinClientComponent>()->ConnectToOdin(PlayerId);
+		UGameplayStatics::GetPlayerControllerFromID(this, 0)->GetComponentByClass<UOdinClientComponent>()->
+		                                                      ConnectToOdin(PlayerId);
 	}
 }
 
@@ -70,4 +71,3 @@ void AOdinCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 
 	DOREPLIFETIME(AOdinCharacter, PlayerId);
 }
-

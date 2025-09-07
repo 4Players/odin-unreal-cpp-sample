@@ -77,3 +77,5 @@ DerivedDataCache/*
 !Plugins/**/Source/**/*.a
 !Plugins/**/Source/**/*.dll
 !Plugins/**/Source/**/*.lib
+
+/.idea

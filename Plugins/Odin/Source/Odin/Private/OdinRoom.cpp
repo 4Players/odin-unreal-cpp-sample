@@ -10,9 +10,11 @@
 
 #include "Odin.h"
 #include "OdinFunctionLibrary.h"
-#include "OdinRoom.AsyncTasks.h"
 #include "OdinSubsystem.h"
+#include "OdinRoom.AsyncTasks.h"
+#include "OdinRegistrationSubsystem.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 
 UOdinRoom::UOdinRoom(const class FObjectInitializer& PCIP)
     : Super(PCIP)
@@ -24,7 +26,8 @@ UOdinRoom::UOdinRoom(const class FObjectInitializer& PCIP)
 void UOdinRoom::BeginDestroy()
 {
     Super::BeginDestroy();
-    this->CleanUp();
+    UE_LOG(Odin, Verbose, TEXT("UOdinRoom::BeginDestroy()"));
+    this->Destroy();
 }
 
 void UOdinRoom::FinishDestroy()
@@ -39,7 +42,7 @@ void UOdinRoom::Destroy()
 
 bool UOdinRoom::IsConnected() const
 {
-    UOdinSubsystem* OdinSubsystem = UOdinSubsystem::Get();
+    UOdinRegistrationSubsystem* OdinSubsystem = UOdinRegistrationSubsystem::Get();
     if (OdinSubsystem) {
 
         const bool bIsRegistered = OdinSubsystem->IsRoomRegistered(room_handle_);
@@ -64,22 +67,28 @@ void UOdinRoom::CleanUp()
 
     {
         FScopeLock lock(&this->medias_cs_);
+        for (auto media : this->medias_) {
+            if (nullptr != media.Value) {
+                odin_media_stream_destroy(media.Value->GetMediaHandle());
+            }
+        }
         this->medias_.Empty();
     }
 
-    if (room_handle_ > 0) {
-        (new FAutoDeleteAsyncTask<DestroyRoomTask>(RoomHandle()))->StartBackgroundTask();
-        room_handle_ = 0;
-    } else {
-        UE_LOG(Odin, Log,
-               TEXT("UOdinRoom::Cleanup(): Aborted starting destroy room task, room handle is "
-                    "already invalid."))
+    UE_LOG(Odin, Verbose, TEXT("UOdinRoom::CleanUp() starting DestroyRoomTask"));
+    (new FAutoDeleteAsyncTask<DestroyRoomTask>(RoomHandle()))->StartBackgroundTask();
+
+    room_handle_ = 0;
+
+    if (submix_listener_) {
+        submix_listener_->StopSubmixListener();
     }
+    UE_LOG(Odin, Verbose, TEXT("UOdinRoom::CleanUp() done"));
 }
 
 void UOdinRoom::DeregisterRoomFromSubsystem()
 {
-    UOdinSubsystem* OdinSubsystem = UOdinSubsystem::Get();
+    UOdinRegistrationSubsystem* OdinSubsystem = UOdinRegistrationSubsystem::Get();
     if (OdinSubsystem) {
         OdinSubsystem->DeregisterRoom(this->room_handle_);
     }
@@ -88,10 +97,23 @@ void UOdinRoom::DeregisterRoomFromSubsystem()
 UOdinRoom* UOdinRoom::ConstructRoom(UObject*                WorldContextObject,
                                     const FOdinApmSettings& InitialAPMSettings)
 {
-    UOdinSubsystem* OdinSubsystem = UOdinSubsystem::Get();
+    UOdinRegistrationSubsystem* OdinSubsystem = UOdinRegistrationSubsystem::Get();
     if (!OdinSubsystem) {
         UE_LOG(Odin, Error,
-               TEXT("Aborted Odin Room Construction due to invalid Odin Subsystem reference."))
+               TEXT("UOdinRoom::ConstructRoom: Aborted Odin Room Construction due to invalid Odin "
+                    "Subsystem reference."));
+        return nullptr;
+    }
+
+    if (!WorldContextObject || !WorldContextObject->GetWorld()) {
+        UE_LOG(Odin, Error,
+               TEXT("UOdinRoom::ConstructRoom: Referenced World Context Object is not valid, "
+                    "aborting."));
+        return nullptr;
+    }
+
+    if (WorldContextObject->GetWorld()->IsPlayingReplay()) {
+        UE_LOG(Odin, Log, TEXT("UOdinRoom::ConstructRoom: Aborting room creation during replay."));
         return nullptr;
     }
 
@@ -100,7 +122,7 @@ UOdinRoom* UOdinRoom::ConstructRoom(UObject*                WorldContextObject,
     if (0 == room->room_handle_) {
         UE_LOG(Odin, Error,
                TEXT("UOdinRoom::ConstructRoom: odin_room_create() returned a zero room handle, "
-                    "indicating that the ODIN client runtime was not initialized yet."))
+                    "indicating that the ODIN client runtime was not initialized yet."));
         return nullptr;
     }
 
@@ -162,9 +184,9 @@ void UOdinRoom::UpdateAPMConfig(FOdinApmSettings apm_config)
     odin_apm_config.volume_gate_release_loudness = apm_config.fVolumeGateReleaseLoudness;
     odin_apm_config.echo_canceller               = apm_config.bEchoCanceller;
     odin_apm_config.high_pass_filter             = apm_config.bHighPassFilter;
-    odin_apm_config.pre_amplifier                = apm_config.bPreAmplifier;
     odin_apm_config.transient_suppressor         = apm_config.bTransientSuppresor;
-    odin_apm_config.gain_controller              = apm_config.bGainController;
+    odin_apm_config.gain_controller_version =
+        static_cast<OdinGainControllerVersion>(apm_config.GainControllerVersion);
 
     if (nullptr == submix_listener_) {
         submix_listener_ = NewObject<UOdinSubmixListener>(this);
@@ -180,19 +202,19 @@ void UOdinRoom::UpdateAPMConfig(FOdinApmSettings apm_config)
     }
 
     switch (apm_config.noise_suppression_level) {
-        case OdinNS_None: {
+        case EOdinNoiseSuppressionLevel::OdinNS_None: {
             odin_apm_config.noise_suppression_level = OdinNoiseSuppressionLevel_None;
         } break;
-        case OdinNS_Low: {
+        case EOdinNoiseSuppressionLevel::OdinNS_Low: {
             odin_apm_config.noise_suppression_level = OdinNoiseSuppressionLevel_Low;
         } break;
-        case OdinNS_Moderate: {
+        case EOdinNoiseSuppressionLevel::OdinNS_Moderate: {
             odin_apm_config.noise_suppression_level = OdinNoiseSuppressionLevel_Moderate;
         } break;
-        case OdinNS_High: {
+        case EOdinNoiseSuppressionLevel::OdinNS_High: {
             odin_apm_config.noise_suppression_level = OdinNoiseSuppressionLevel_High;
         } break;
-        case OdinNS_VeryHigh: {
+        case EOdinNoiseSuppressionLevel::OdinNS_VeryHigh: {
             odin_apm_config.noise_suppression_level = OdinNoiseSuppressionLevel_VeryHigh;
         } break;
         default:;
@@ -260,7 +282,7 @@ UOdinSubmixListener* UOdinRoom::GetSubmixListener() const
 
 void UOdinRoom::HandleOdinEvent(OdinRoomHandle RoomHandle, const OdinEvent event)
 {
-    UOdinSubsystem* OdinSubsystem = UOdinSubsystem::Get();
+    UOdinRegistrationSubsystem* OdinSubsystem = UOdinRegistrationSubsystem::Get();
     if (!OdinSubsystem) {
         UE_LOG(Odin, Error,
                TEXT("Aborting HandleOdinEvent due to invalid OdinSubsystem reference."));

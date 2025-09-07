@@ -10,12 +10,12 @@
 #include "OdinClientComponent.generated.h"
 
 
-UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class ODINUNREALCPPSAMPLE_API UOdinClientComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
-public:	
+public:
 	// Sets default values for this component's properties
 	UOdinClientComponent();
 
@@ -24,28 +24,29 @@ protected:
 	virtual void BeginPlay() override;
 
 	UPROPERTY()
-	UOdinTokenGenerator* tokenGenerator;
+	UOdinTokenGenerator* TokenGenerator;
 
 	UPROPERTY()
-	FString roomToken;
+	FString RoomToken;
 
 	UPROPERTY()
-	UOdinRoom* room;
+	UOdinRoom* Room;
 
 	UPROPERTY()
-	FOdinApmSettings apmSettings;
+	FOdinApmSettings ApmSettings;
 
 	UFUNCTION()
-	void OnPeerJoinedHandler(int64 peerId, FString userId, const TArray<uint8>& userData, UOdinRoom* odinRoom);
+	void OnRoomJoinSuccessHandler(FString RoomId, const TArray<uint8>& RoomUserData, FString Customer, int64 OwnPeerId,
+	                              FString OwnUserId);
 
 	UFUNCTION()
-	void OnMediaAddedHandler(int64 peerId, UOdinPlaybackMedia* media, UOdinJsonObject* properties, UOdinRoom* odinRoom);
+	void OnPeerJoinedHandler(int64 PeerId, FString UserId, const TArray<uint8>& UserData, UOdinRoom* OdinRoom);
 
 	UFUNCTION()
-	void OnRoomJoinedHandler(int64 peerId, const TArray<uint8>& roomUserData, UOdinRoom* odinRoom);
+	void OnMediaAddedHandler(int64 PeerId, UOdinPlaybackMedia* Media, UOdinJsonObject* Properties, UOdinRoom* OdinRoom);
 
 	UFUNCTION()
-	void OnOdinErrorHandler(int64 errorCode);
+	void OnOdinErrorHandler(int64 ErrorCode);
 
 	FOdinRoomJoinError OnRoomJoinError;
 	FOdinRoomJoinSuccess OnRoomJoinSuccess;
@@ -54,11 +55,8 @@ protected:
 	FOdinRoomAddMediaSuccess OnAddMediaSuccess;
 
 	UPROPERTY()
-	UOdinAudioCapture* capture;
+	UOdinAudioCapture* Capture;
 
-public:	
-	// Called every frame
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-
-	void ConnectToOdin(FGuid playerId);
+public:
+	void ConnectToOdin(FGuid PlayerId);
 };

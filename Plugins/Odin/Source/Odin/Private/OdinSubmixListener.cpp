@@ -13,7 +13,8 @@
 #endif
 
 #include "AudioDevice.h"
-#include "OdinInitializationSubsystem.h"
+#include "OdinFunctionLibrary.h"
+#include "OdinSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 
@@ -34,6 +35,11 @@ void UOdinSubmixListener::StartSubmixListener()
         return;
     }
 
+    if (GetWorld()->IsPlayingReplay()) {
+        UE_LOG(Odin, Log, TEXT("OdinSubmixListener: StartSubmixListener aborted, playing replay."));
+        return;
+    }
+
     if (IsListening()) {
         UE_LOG(Odin, Verbose,
                TEXT("OdinSubmixListener, StartSubmixListener: Already listening, restarting submix "
@@ -48,8 +54,8 @@ void UOdinSubmixListener::StartSubmixListener()
         return;
     }
 
-    const UOdinInitializationSubsystem* OdinInitializationSubsystem =
-        GameInstance->GetSubsystem<UOdinInitializationSubsystem>();
+    const UOdinSubsystem* OdinInitializationSubsystem =
+        GameInstance->GetSubsystem<UOdinSubsystem>();
     if (!OdinInitializationSubsystem) {
         UE_LOG(Odin, Error,
                TEXT("OdinSubmixListener: StartSubmixListener failed, UOdinInitializationSubsystem "
@@ -66,6 +72,8 @@ void UOdinSubmixListener::StartSubmixListener()
            OdinSampleRate, OdinChannels);
 
     FAudioDeviceHandle AudioDeviceHandle = GetWorld()->GetAudioDevice();
+    RegisteredDeviceId                   = AudioDeviceHandle->DeviceID;
+
     UE_LOG(Odin, Verbose, TEXT("OdinSubmixListener: Retrieved Audio Device with Handle Id: %d"),
            AudioDeviceHandle.GetDeviceID());
     if (!AudioDeviceHandle.IsValid()) {
@@ -103,10 +111,12 @@ void UOdinSubmixListener::StartSubmixListener()
 
 void UOdinSubmixListener::StopSubmixListener()
 {
-    if (!GetWorld() || !IsListening() || !SubmixBufferListener.IsValid())
+    if (!GetWorld() || !IsListening() || !SubmixBufferListener.IsValid()
+        || !FAudioDeviceManager::Get())
         return;
 
-    FAudioDeviceHandle AudioDeviceHandle = GetWorld()->GetAudioDevice();
+    FAudioDeviceHandle AudioDeviceHandle =
+        FAudioDeviceManager::Get()->GetAudioDevice(RegisteredDeviceId);
     if (!AudioDeviceHandle.IsValid()) {
         return;
     }
@@ -160,11 +170,18 @@ void UOdinSubmixListener::StopRecording()
 
 FOdinSubmixBufferListenerImplementation::FOdinSubmixBufferListenerImplementation()
     : CurrentRoomHandle(0)
+    , ResamplerHandle(0)
     , bRecordSubmixOutput(false)
+    , RawBuffer(nullptr)
+    , RawBufferSize(0)
 {
 }
 
-FOdinSubmixBufferListenerImplementation::~FOdinSubmixBufferListenerImplementation() {}
+FOdinSubmixBufferListenerImplementation::~FOdinSubmixBufferListenerImplementation()
+{
+    delete[] RawBuffer;
+    RawBuffer = nullptr;
+}
 
 void FOdinSubmixBufferListenerImplementation::Initialize(
     OdinRoomHandle Handle, int32 SampleRate, int32 Channels,
@@ -172,18 +189,26 @@ void FOdinSubmixBufferListenerImplementation::Initialize(
 {
     CurrentRoomHandle   = Handle;
     OdinSampleRate      = SampleRate;
-    OdinChannels        = Channels;
+    OdinNumChannels     = Channels;
     ErrorCallback       = Callback;
     bInitialized        = true;
     bRecordSubmixOutput = ShouldRecordSubmixOutput;
 
-    SavedBuffer.Reset();
+    RecordingBuffer.Reset();
+    RawBufferSize = SampleRate * Channels;
+
+    delete[] RawBuffer;
+    RawBuffer = nullptr;
+    RawBuffer = new float[RawBufferSize];
 }
 
 void FOdinSubmixBufferListenerImplementation::StopListener()
 {
     bInitialized = false;
     StopSubmixRecording();
+    delete[] RawBuffer;
+    RawBuffer     = nullptr;
+    RawBufferSize = 0;
 }
 
 bool FOdinSubmixBufferListenerImplementation::IsInitialized() const
@@ -202,7 +227,7 @@ void FOdinSubmixBufferListenerImplementation::StopSubmixRecording()
         const FString       FileName = "SubmixOutput";
         FString             FilePath = "";
         FSoundWavePCMWriter Writer;
-        Writer.BeginWriteToWavFile(SavedBuffer, FileName, FilePath, [FileName]() {
+        Writer.BeginWriteToWavFile(RecordingBuffer, FileName, FilePath, [FileName]() {
             UE_LOG(Odin, Log,
                    TEXT("FOdinSubmixBufferListenerImplementation: Successfully wrote SubMix Output "
                         "to /Saved/BouncedWavFiles/%s.wav"),
@@ -212,6 +237,66 @@ void FOdinSubmixBufferListenerImplementation::StopSubmixRecording()
     }
 }
 
+void FOdinSubmixBufferListenerImplementation::ResetOdinResampler()
+{
+    if (ResamplerHandle) {
+        OdinReturnCode DestroyResult = odin_resampler_destroy(ResamplerHandle);
+        if (odin_is_error(DestroyResult)) {
+            const FString DestroyErrorString =
+                UOdinFunctionLibrary::FormatOdinError(DestroyResult, false);
+            UE_LOG(Odin, Error,
+                   TEXT("FOdinSubmixBufferListenerImplementation::OnNewSubmixBuffer: Error "
+                        "while trying to destroy existing resampler: %s"),
+                   *DestroyErrorString);
+        }
+        ResamplerHandle = 0;
+    }
+
+    UE_LOG(Odin, VeryVerbose,
+           TEXT("OdinSubmixListener: Creating New Resampler, FromSampleRate: %d, "
+                "OdinSampleRate: %d, OdinNumChannels: %d"),
+           FromSampleRate, OdinSampleRate, OdinNumChannels);
+    ResamplerHandle = odin_resampler_create(FromSampleRate, OdinSampleRate, OdinNumChannels);
+}
+
+void FOdinSubmixBufferListenerImplementation::PerformResampling(float*& BufferToUse,
+                                                                int32&  NumSamplesToProcess)
+{
+    NumSamplesToProcess = 0;
+    if (!ResamplerHandle || nullptr == RawBuffer) {
+        UE_LOG(Odin, Error,
+               TEXT("Aborted resampling for odin audio process reverse due to invalid input."));
+        return;
+    }
+
+    size_t         OutputCapacity = RawBufferSize;
+    OdinReturnCode ResampleResult =
+        odin_resampler_process(ResamplerHandle, ChannelMixBuffer.GetData(),
+                               ChannelMixBuffer.GetNumSamples(), RawBuffer, &OutputCapacity);
+    if (odin_is_error(ResampleResult)) {
+        FString FormattedError = UOdinFunctionLibrary::FormatOdinError(ResampleResult, false);
+        UE_LOG(Odin, Error, TEXT("Aborted odin audio process reverse due to Error: %s"),
+               *FormattedError);
+    } else if (OutputCapacity != ResampleResult) {
+        UE_LOG(Odin, Error,
+               TEXT("Aborted odin audio process reverse due to insufficient "
+                    "Capacity in the resampler output buffer, required min capacity is %llu"),
+               OutputCapacity);
+    } else {
+        BufferToUse         = RawBuffer;
+        NumSamplesToProcess = ResampleResult;
+    }
+}
+
+void FOdinSubmixBufferListenerImplementation::PerformRemixing(float* AudioData, int32 InNumSamples,
+                                                              int32       InNumChannels,
+                                                              const int32 InSampleRate)
+{
+    ChannelMixBuffer.Reset();
+    ChannelMixBuffer.Append(AudioData, InNumSamples, InNumChannels, InSampleRate);
+    ChannelMixBuffer.MixBufferToChannels(OdinNumChannels);
+}
+
 void FOdinSubmixBufferListenerImplementation::OnNewSubmixBuffer(
     const USoundSubmix* OwningSubmix, float* AudioData, int32 InNumSamples, int32 InNumChannels,
     const int32 InSampleRate, double InAudioClock)
@@ -219,47 +304,33 @@ void FOdinSubmixBufferListenerImplementation::OnNewSubmixBuffer(
     if (!IsInitialized())
         return;
 
-    UE_LOG(Odin, VeryVerbose,
-           TEXT("OdinSubmixListener: In Channels: %d In SampleRate: %d In Num Samples: %d In Audio "
-                "Clock: %f"),
-           InNumChannels, InSampleRate, InNumSamples, InAudioClock);
-
-    TSampleBuffer<float> buffer(AudioData, InNumSamples, InNumChannels, InSampleRate);
-    if (buffer.GetNumChannels() != OdinChannels) {
-        UE_LOG(Odin, VeryVerbose,
-               TEXT("OdinSubmixListener: Due to differences in Channel Count, remixing buffer from "
-                    "%d Channels to %d "
-                    "OdinChannels"),
-               InNumChannels, OdinChannels);
-        buffer.MixBufferToChannels(OdinChannels);
+    if (InSampleRate != FromSampleRate || InNumChannels != FromNumChannels) {
+        FromSampleRate  = InSampleRate;
+        FromNumChannels = InNumChannels;
+        ResetOdinResampler();
     }
 
-    if (InSampleRate != OdinSampleRate) {
-        UE_LOG(Odin, Verbose,
-               TEXT("OdinSubmixListener: InSampleRate %d !== OdinSampleRate %d - Echo Cancellation "
-                    "will not work "
-                    "correctly!"),
-               InSampleRate, OdinSampleRate);
+    float* BufferToUse         = AudioData;
+    int32  NumSamplesToProcess = InNumSamples;
+    if (FromSampleRate != OdinSampleRate || FromNumChannels != OdinNumChannels) {
+        PerformRemixing(AudioData, InNumSamples, InNumChannels, InSampleRate);
+        PerformResampling(BufferToUse, NumSamplesToProcess);
     }
 
-    float*         pbuffer = buffer.GetArrayView().GetData();
-    OdinReturnCode result =
-        odin_audio_process_reverse(CurrentRoomHandle, pbuffer, buffer.GetNumSamples());
+    if (NumSamplesToProcess < 1 || nullptr == BufferToUse) {
+        return;
+    }
+    const OdinReturnCode Result =
+        odin_audio_process_reverse(CurrentRoomHandle, BufferToUse, NumSamplesToProcess);
 
     if (bRecordSubmixOutput && InNumSamples > 0) {
-        if (SavedBuffer.GetNumChannels() != buffer.GetNumChannels()
-            || SavedBuffer.GetSampleRate() != buffer.GetSampleRate()) {
-            SavedBuffer.Append(buffer.GetData(), buffer.GetNumSamples(), buffer.GetNumChannels(),
-                               buffer.GetSampleRate());
-        } else {
-            SavedBuffer.Append(buffer.GetData(), buffer.GetNumSamples());
-        }
+        RecordingBuffer.Append(AudioData, InNumSamples);
     }
 
-    if (odin_is_error(result)) {
-        UE_LOG(Odin, Verbose, TEXT("OdinSubmixListener: din_audio_process_reverse result: %d"),
-               result);
-        UE_LOG(Odin, Verbose, TEXT("OdinSubmixListener: OnNewSubmixBuffer on %s "),
+    if (odin_is_error(Result)) {
+        UE_LOG(Odin, VeryVerbose, TEXT("OdinSubmixListener: odin_audio_process_reverse result: %d"),
+               Result);
+        UE_LOG(Odin, VeryVerbose, TEXT("OdinSubmixListener: OnNewSubmixBuffer on %s "),
                *OwningSubmix->GetFName().ToString());
 
         ErrorCallback.ExecuteIfBound();

@@ -6,6 +6,4 @@
 AOdinPlayerController::AOdinPlayerController()
 {
 	OdinClient = CreateDefaultSubobject<UOdinClientComponent>(TEXT("OdinClient"));
-
-	AddOwnedComponent(OdinClient);
 }

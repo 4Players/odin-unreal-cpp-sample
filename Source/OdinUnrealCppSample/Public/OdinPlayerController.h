@@ -7,9 +7,6 @@
 #include "OdinClientComponent.h"
 #include "OdinPlayerController.generated.h"
 
-/**
- * 
- */
 UCLASS()
 class ODINUNREALCPPSAMPLE_API AOdinPlayerController : public APlayerController
 {
@@ -19,6 +16,6 @@ public:
 	AOdinPlayerController();
 
 private:
-	UPROPERTY()
+	UPROPERTY(VisibleAnywhere)
 	UOdinClientComponent* OdinClient;
 };

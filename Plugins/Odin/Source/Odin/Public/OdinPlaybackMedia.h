@@ -6,9 +6,10 @@
 #include "OdinMediaBase.h"
 #include "UObject/Object.h"
 #include "odin_sdk.h"
-
+#include "OdinPlaybackStreamReader.h"
 #include <memory>
 
+#include "Odin.h"
 #include "OdinPlaybackMedia.generated.h"
 
 class UOdinRoom;
@@ -70,14 +71,14 @@ class ODIN_API UOdinPlaybackMedia : public UOdinMediaBase
 
   public:
     UOdinPlaybackMedia();
-    UOdinPlaybackMedia(OdinMediaStreamHandle streamHandle, UOdinRoom *room);
+    UOdinPlaybackMedia(OdinMediaStreamHandle streamHandle, UOdinRoom* room);
 
     /**
      * Sets the room for the playback media object to the provided room pointer.
      *
      * @param room Pointer to the UOdinRoom object to set as the room for the playback media.
      */
-    void SetRoom(UOdinRoom *room)
+    void SetRoom(UOdinRoom* room)
     {
         this->Room = room;
     }
@@ -91,6 +92,8 @@ class ODIN_API UOdinPlaybackMedia : public UOdinMediaBase
               meta = (DisplayName = "Get Output Media ID",
                       ToolTip = "Get the internal ID of an output media", Category = "Odin|Debug"))
     int32 GetMediaId();
+
+    virtual void SetMediaHandle(OdinMediaStreamHandle handle) override;
 
     /**
      * @brief Get the peer ID associated with the media stream.
@@ -116,9 +119,26 @@ class ODIN_API UOdinPlaybackMedia : public UOdinMediaBase
                       Category = "Odin|Debug"))
     FOdinAudioStreamStats AudioStreamStats();
 
-  protected:
-    void BeginDestroy() override;
+    [[deprecated("Please use GetPlaybackStreamReader() to access the "
+                 "FOdinPlaybackStreamReader::ReadData function.")]]
+    OdinReturnCode ReadData(int32& RefReaderIndex, float* OutAudio, int32 NumSamples);
 
-    UPROPERTY(BlueprintReadOnly, Category = "Room")
-    UOdinRoom *Room;
+    TSharedPtr<FOdinPlaybackStreamReader, ESPMode::ThreadSafe> GetPlaybackStreamReader() const;
+
+    virtual void AddAudioBufferListener(IAudioBufferListener* InAudioBufferListener) override;
+    virtual void RemoveAudioBufferListener(IAudioBufferListener* AudioBufferListener) override;
+
+  protected:
+    virtual void BeginDestroy() override;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Odin | Playback")
+    UOdinRoom* Room;
+
+    /**
+     * The Audio Buffer Capacity in seconds.
+     */
+    UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category = "Odin | Playback")
+    float AudioBufferCapacity = 0.1f;
+
+    TSharedPtr<FOdinPlaybackStreamReader, ESPMode::ThreadSafe> PlaybackStreamReader;
 };
