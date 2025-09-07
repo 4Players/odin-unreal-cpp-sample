@@ -18,41 +18,52 @@ AOdinCharacter::AOdinCharacter()
 void AOdinCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-
-
+	
+	// check if running on any kind of server
 	if (GetNetMode() == NM_DedicatedServer || GetNetMode() == NM_ListenServer)
 	{
+		// create new guid
 		PlayerId = FGuid::NewGuid();
 
-		UOdinGameInstance* GameInstance = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this));
+		// add guid and reference to this character to the game instance's player character map
+		UOdinGameInstance* GameInstance = Cast<UOdinGameInstance>(UGameplayStatics::GetGameInstance(this));
+		if (!GameInstance)
+		{
+			UE_LOG(LogTemp, Error,
+			       TEXT(
+				       "AOdinCharacter::BeginPlay: Retrieved invalid Game Instance type, please use UOdinGameInstance as a Game Instance base class."
+			       ))
+			return;
+		}
 
 		GameInstance->PlayerCharacters.Add(PlayerId, this);
 
 		UE_LOG(LogTemp, Warning, TEXT("Created PlayerId: %s"), *PlayerId.ToString());
 
+		// if this character is also controlled locally we want to start the routine to join the Odin Room
 		if (IsLocallyControlled())
 		{
-			UGameplayStatics::GetPlayerControllerFromID(this, 0)->GetComponentByClass<UOdinClientComponent>()->
-			                                                      ConnectToOdin(PlayerId);
+			UOdinClientComponent* OdinClientComponent = UGameplayStatics::GetPlayerControllerFromID(this, 0)->
+				GetComponentByClass<UOdinClientComponent>();
+			if (OdinClientComponent)
+			{
+				OdinClientComponent->ConnectToOdin(PlayerId);
+			}
 		}
 	}
 }
 
-// Called every frame
-void AOdinCharacter::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-}
-
-// Called to bind functionality to input
-void AOdinCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
-{
-	Super::SetupPlayerInputComponent(PlayerInputComponent);
-}
-
 void AOdinCharacter::OnRep_PlayerId()
 {
-	UOdinGameInstance* GameInstance = StaticCast<UOdinGameInstance*>(UGameplayStatics::GetGameInstance(this));
+	UOdinGameInstance* GameInstance = Cast<UOdinGameInstance>(UGameplayStatics::GetGameInstance(this));
+	if (!GameInstance)
+	{
+		UE_LOG(LogTemp, Error,
+		       TEXT(
+			       "AOdinCharacter::OnRep_PlayerId: Retrieved invalid Game Instance type, please use UOdinGameInstance as a Game Instance base class."
+		       ))
+		return;
+	}
 
 	GameInstance->PlayerCharacters.Add(PlayerId, this);
 
@@ -60,8 +71,12 @@ void AOdinCharacter::OnRep_PlayerId()
 
 	if (IsLocallyControlled())
 	{
-		UGameplayStatics::GetPlayerControllerFromID(this, 0)->GetComponentByClass<UOdinClientComponent>()->
-		                                                      ConnectToOdin(PlayerId);
+		UOdinClientComponent* OdinClientComponent = UGameplayStatics::GetPlayerControllerFromID(this, 0)->
+			GetComponentByClass<UOdinClientComponent>();
+		if (OdinClientComponent)
+		{
+			OdinClientComponent->ConnectToOdin(PlayerId);
+		}
 	}
 }
 

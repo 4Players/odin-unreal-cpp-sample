@@ -29,15 +29,18 @@ void UOdinClientComponent::BeginPlay()
 void UOdinClientComponent::OnPeerJoinedHandler(int64 PeerId, FString UserId, const TArray<uint8>& UserData,
                                                UOdinRoom* OdinRoom)
 {
+	// create Json Object from User Data Byte Array
 	const auto JSON = UOdinJsonObject::ConstructJsonObjectFromBytes(this, UserData);
-
+	// Get Guid String from Json
 	const FString GUIDString = JSON->GetStringField(TEXT("PlayerId"));
 
 	UE_LOG(LogTemp, Warning, TEXT("Peer with PlayerId %s joined. Trying to map to player character ..."), *GUIDString);
 
+	// Parse String into Guid
 	FGuid GUID = FGuid();
 	if (FGuid::Parse(GUIDString, GUID))
 	{
+		// if successful, get the UOdinGameInstance and use the PlayerCharacters map to obtain the correct character object
 		UOdinGameInstance* GameInstance = Cast<UOdinGameInstance>(UGameplayStatics::GetGameInstance(this));
 		if (!GameInstance)
 		{
@@ -45,6 +48,7 @@ void UOdinClientComponent::OnPeerJoinedHandler(int64 PeerId, FString UserId, con
 			return;
 		}
 
+		// Finally add that character together with the Odin Peer Id to the OdinPlayerCharacters map of the Game Instance - for later use in the OnMediaAdded Event
 		ACharacter* Character = GameInstance->PlayerCharacters[GUID];
 		GameInstance->OdinPlayerCharacters.Add(PeerId, Character);
 
@@ -59,6 +63,7 @@ void UOdinClientComponent::OnPeerJoinedHandler(int64 PeerId, FString UserId, con
 void UOdinClientComponent::OnMediaAddedHandler(int64 PeerId, UOdinPlaybackMedia* Media, UOdinJsonObject* Properties,
                                                UOdinRoom* OdinRoom)
 {
+	// get corresponding player character
 	UOdinGameInstance* OdinGameInstance = Cast<UOdinGameInstance>(UGameplayStatics::GetGameInstance(this));
 	if (!OdinGameInstance)
 	{
@@ -66,18 +71,23 @@ void UOdinClientComponent::OnMediaAddedHandler(int64 PeerId, UOdinPlaybackMedia*
 		return;
 	}
 	ACharacter* Player = OdinGameInstance->OdinPlayerCharacters[PeerId];
+	// create, attach and cast a new UOdinSynthComponent to the correct player character
 	UActorComponent* Comp = Player->AddComponentByClass(UOdinSynthComponent::StaticClass(), false, FTransform::Identity,
 	                                                    false);
 	UOdinSynthComponent* Synth = Cast<UOdinSynthComponent>(Comp);
 
+	// assign Odin media as usual
 	Synth->Odin_AssignSynthToMedia(Media);
 
+	// Here we need to set any wanted attenuation settings
 	FSoundAttenuationSettings AttenuationSettings;
 	AttenuationSettings.bSpatialize = true;
 	AttenuationSettings.bAttenuate = true;
-	// Continue with more attenuation settings
+	// more attenuation settings as desired
 	Synth->AdjustAttenuation(AttenuationSettings);
 
+	// Lastly activate the Synth Component an we are good to go
+	Synth->Activate();
 	UE_LOG(LogTemp, Warning, TEXT("Odin Synth Added"));
 }
 
@@ -91,7 +101,7 @@ void UOdinClientComponent::OnRoomJoinSuccessHandler(FString RoomId, const TArray
 	// cast pointer to capture to UAudioGenerator for Odin_CreateMedia
 	UAudioGenerator* CaptureAsGenerator = Cast<UAudioGenerator>(Capture);
 	auto Media = UOdinFunctionLibrary::Odin_CreateMedia(CaptureAsGenerator);
-	
+
 	OnAddMediaError.BindDynamic(this, &UOdinClientComponent::OnOdinErrorHandler);
 
 	UOdinRoomAddMedia* Action = UOdinRoomAddMedia::AddMedia(this, Room, Media, OnAddMediaError, OnAddMediaSuccess);
@@ -127,7 +137,6 @@ void UOdinClientComponent::ConnectToOdin(FGuid PlayerId)
 	ApmSettings.bEchoCanceller = true;
 
 	Room = UOdinRoom::ConstructRoom(this, ApmSettings);
-
 	Room->onPeerJoined.AddUniqueDynamic(this, &UOdinClientComponent::OnPeerJoinedHandler);
 	Room->onMediaAdded.AddUniqueDynamic(this, &UOdinClientComponent::OnMediaAddedHandler);
 	OnRoomJoinSuccess.BindDynamic(this, &UOdinClientComponent::OnRoomJoinSuccessHandler);
