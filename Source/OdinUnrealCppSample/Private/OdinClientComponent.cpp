@@ -3,11 +3,14 @@
 #include "OdinClientComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Character.h"
-#include "OdinSynthComponent.h"
 #include "AudioCaptureBlueprintLibrary.h"
 #include "OdinFunctionLibrary.h"
 #include "OdinJsonObject.h"
 #include "OdinGameInstance.h"
+#include "OdinAudio/OdinDecoder.h"
+#include "OdinAudio/OdinEncoder.h"
+#include "OdinAudio/OdinPipeline.h"
+#include "OdinAudio/OdinSynthComponent.h"
 
 // Sets default values for this component's properties
 UOdinClientComponent::UOdinClientComponent()
@@ -19,18 +22,10 @@ UOdinClientComponent::UOdinClientComponent()
 	SetIsReplicatedByDefault(true);
 }
 
-
-// Called when the game starts
-void UOdinClientComponent::BeginPlay()
-{
-	Super::BeginPlay();
-}
-
-void UOdinClientComponent::OnPeerJoinedHandler(int64 PeerId, FString UserId, const TArray<uint8>& UserData,
-                                               UOdinRoom* OdinRoom)
+void UOdinClientComponent::OnPeerJoinedHandler(UOdinRoom* OdinRoom, FOdinPeerJoined PeerData)
 {
 	// create Json Object from User Data Byte Array
-	const auto JSON = UOdinJsonObject::ConstructJsonObjectFromBytes(this, UserData);
+	const auto JSON = UOdinJsonObject::ConstructJsonObjectFromString(this, PeerData.user_data);
 	// Get Guid String from Json
 	const FString GUIDString = JSON->GetStringField(TEXT("PlayerId"));
 
@@ -48,107 +43,129 @@ void UOdinClientComponent::OnPeerJoinedHandler(int64 PeerId, FString UserId, con
 			return;
 		}
 
-		// Finally add that character together with the Odin Peer Id to the OdinPlayerCharacters map of the Game Instance - for later use in the OnMediaAdded Event
-		ACharacter* Character = GameInstance->PlayerCharacters[GUID];
-		GameInstance->OdinPlayerCharacters.Add(PeerId, Character);
+		ACharacter* Character = GameInstance->PlayerCharacters.FindRef(GUID);
 
-		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined"), *UserId);
+		if (Character)
+		{
+			GameInstance->OdinPlayerCharacters.Add(PeerData.peer_id, Character);
+
+			// Create Decoder for this Peer
+			UOdinDecoder* Decoder = UOdinDecoder::ConstructDecoder(this, 48000, true);
+
+			// Register the decoder to the room and peer
+			UOdinFunctionLibrary::RegisterDecoder(Decoder, OdinRoom, PeerData.peer_id);
+
+			// Create Odin Synth Component on the Character
+			UActorComponent* Comp = Character->AddComponentByClass(UOdinSynthComponent::StaticClass(), false,
+			                                                       FTransform::Identity, false);
+			UOdinSynthComponent* Synth = Cast<UOdinSynthComponent>(Comp);
+
+			// Assign Decoder to Synth
+			Synth->SetDecoder(Decoder);
+
+
+			// Here we need to set any wanted attenuation settings
+			FSoundAttenuationSettings AttenuationSettings;
+			AttenuationSettings.bSpatialize = true;
+			AttenuationSettings.bAttenuate = true;
+			// more attenuation settings as desired
+			Synth->AdjustAttenuation(AttenuationSettings);
+
+
+			// Lastly activate the Synth Component an we are good to go
+			Synth->Activate();
+			UE_LOG(LogTemp, Warning, TEXT("Odin Synth Added"));
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined"), *PeerData.user_id);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined, but could not be mapped to a player."), *UserId);
+		UE_LOG(LogTemp, Warning, TEXT("Peer %s joined, but could not be mapped to a player."), *PeerData.user_id);
 	}
 }
 
-void UOdinClientComponent::OnMediaAddedHandler(int64 PeerId, UOdinPlaybackMedia* Media, UOdinJsonObject* Properties,
-                                               UOdinRoom* OdinRoom)
-{
-	// get corresponding player character
-	UOdinGameInstance* OdinGameInstance = Cast<UOdinGameInstance>(UGameplayStatics::GetGameInstance(this));
-	if (!OdinGameInstance)
-	{
-		UE_LOG(LogTemp, Error, TEXT("Received Game Instance of invalid type, please use a UOdinGameInstance."));
-		return;
-	}
-	ACharacter* Player = OdinGameInstance->OdinPlayerCharacters[PeerId];
-	// create, attach and cast a new UOdinSynthComponent to the correct player character
-	UActorComponent* Comp = Player->AddComponentByClass(UOdinSynthComponent::StaticClass(), false, FTransform::Identity,
-	                                                    false);
-	UOdinSynthComponent* Synth = Cast<UOdinSynthComponent>(Comp);
 
-	// assign Odin media as usual
-	Synth->Odin_AssignSynthToMedia(Media);
-
-	// Here we need to set any wanted attenuation settings
-	FSoundAttenuationSettings AttenuationSettings;
-	AttenuationSettings.bSpatialize = true;
-	AttenuationSettings.bAttenuate = true;
-	// more attenuation settings as desired
-	Synth->AdjustAttenuation(AttenuationSettings);
-
-	// Lastly activate the Synth Component an we are good to go
-	Synth->Activate();
-	UE_LOG(LogTemp, Warning, TEXT("Odin Synth Added"));
-}
-
-void UOdinClientComponent::OnRoomJoinSuccessHandler(FString RoomId, const TArray<uint8>& RoomUserData, FString Customer,
-                                                    int64 OwnPeerId, FString OwnUserId)
+void UOdinClientComponent::OnRoomJoinSuccessHandler(UOdinRoom* OdinRoom, FOdinJoined Data)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Joined Room"));
 
 	Capture = UOdinFunctionLibrary::CreateOdinAudioCapture(this);
 
-	// cast pointer to capture to UAudioGenerator for Odin_CreateMedia
+	// cast pointer to capture to UAudioGenerator for CreateOdinEncoderFromGenerator
 	UAudioGenerator* CaptureAsGenerator = Cast<UAudioGenerator>(Capture);
-	auto Media = UOdinFunctionLibrary::Odin_CreateMedia(CaptureAsGenerator);
+	Encoder = UOdinFunctionLibrary::CreateOdinEncoderFromGenerator(this, Room, CaptureAsGenerator);
 
-	OnAddMediaError.BindDynamic(this, &UOdinClientComponent::OnOdinErrorHandler);
+	// Use the new V2 Audio Pipeline to configure APM (Echo Cancellation, Noise Suppression, etc.)
+	if (UOdinPipeline* Pipeline = Encoder->GetOrCreatePipeline())
+	{
+		// Insert APM effect at the start of the pipeline (Index 0)
+		const int32 ApmId = Pipeline->InsertApmEffect(0, 48000, true);
 
-	UOdinRoomAddMedia* Action = UOdinRoomAddMedia::AddMedia(this, Room, Media, OnAddMediaError, OnAddMediaSuccess);
-	Action->Activate();
+		FOdinApmConfig ApmConfig;
+		ApmConfig.echo_canceller = false;
+		ApmConfig.noise_suppression = EOdinNoiseSuppression::ODIN_NOISE_SUPPRESSION_MODERATE;
+		ApmConfig.high_pass_filter = true;
+		ApmConfig.gain_controller = EOdinGainControllerVersion::ODIN_GAIN_CONTROLLER_V2;
+		ApmConfig.transient_suppressor = true;
+
+		// Apply the configuration
+		Pipeline->SetApmConfig(ApmId, ApmConfig);
+
+		// Insert Vad effects next in the pipeline (Index 1)
+		const int32 VadId = Pipeline->InsertVadEffect(1);
+
+		FOdinVadConfig VadConfig;
+		VadConfig.VoiceActivity = {
+			.Enabled = true,
+			.AttackThreshold = 0.7f,
+			.ReleaseThreshold = 0.6f
+		};
+		VadConfig.VolumeGate = {
+			.Enabled = true,
+			.AttackThreshold = -30.0f,
+			.ReleaseThreshold = -40.0f
+		};
+
+		// Apply the vad configuration
+		Pipeline->SetVadConfig(VadId, VadConfig);
+	}
 
 	Capture->StartCapturingAudio();
 }
 
 void UOdinClientComponent::OnOdinErrorHandler(int64 ErrorCode)
 {
-	const FString ErrorString = UOdinFunctionLibrary::FormatError(ErrorCode, true);
+	const FString ErrorString = UOdinFunctionLibrary::FormatOdinError((EOdinError)ErrorCode, true);
 	UE_LOG(LogTemp, Error, TEXT("%s"), *ErrorString);
 }
 
 void UOdinClientComponent::ConnectToOdin(FGuid PlayerId)
 {
 	TokenGenerator = UOdinTokenGenerator::ConstructTokenGenerator(this, "AQGEYTtGuFdlq6Msk+bO9ki6dDJ+fG8UmjfZD+VZOuUt");
+	UOdinJsonObject* AuthJson;
+	TokenGenerator->GenerateRoomToken("TestRoom", "Player", AuthJson, RoomToken);
+	UE_LOG(LogTemp, Warning, TEXT("Start connecting with token: %s"), *RoomToken);
 
-	RoomToken = TokenGenerator->GenerateRoomToken("Test", "Player", EOdinTokenAudience::Default);
+	Room = UOdinRoom::ConstructRoom(this);
+	// Bind Delegates
+	Room->OnRoomPeerJoinedBP.AddUniqueDynamic(this, &UOdinClientComponent::OnPeerJoinedHandler);
+	Room->OnRoomJoinedBP.AddUniqueDynamic(this, &UOdinClientComponent::OnRoomJoinSuccessHandler);
 
-	UE_LOG(LogTemp, Warning, TEXT("%s"), *RoomToken);
+	// Add PlayerId to user data
+	UOdinJsonObject* UserDataObject = UOdinJsonObject::ConstructJsonObject(this);
+	UserDataObject->SetStringField("PlayerId", *PlayerId.ToString());
 
-	ApmSettings = FOdinApmSettings();
+	// Add user data to authentication object
+	AuthJson->SetObjectField("user_data", UserDataObject);
 
-	ApmSettings.bVoiceActivityDetection = true;
-	ApmSettings.fVadAttackProbability = 0.7;
-	ApmSettings.fVadReleaseProbability = 0.6;
-	ApmSettings.bEnableVolumeGate = false;
-	ApmSettings.bHighPassFilter = false;
-	ApmSettings.GainControllerVersion = EOdinGainControllerVersion::V2;
-	ApmSettings.noise_suppression_level = EOdinNoiseSuppressionLevel::OdinNS_Moderate;
-	ApmSettings.bTransientSuppresor = false;
-	ApmSettings.bEchoCanceller = true;
+	// Connect with generated room token and initial user data
+	bool bSuccess = false;
+	Room->ConnectRoom("https://gateway.odin.4players.io", AuthJson->EncodeJson(), bSuccess);
 
-	Room = UOdinRoom::ConstructRoom(this, ApmSettings);
-	Room->onPeerJoined.AddUniqueDynamic(this, &UOdinClientComponent::OnPeerJoinedHandler);
-	Room->onMediaAdded.AddUniqueDynamic(this, &UOdinClientComponent::OnMediaAddedHandler);
-	OnRoomJoinSuccess.BindDynamic(this, &UOdinClientComponent::OnRoomJoinSuccessHandler);
-	OnRoomJoinError.BindDynamic(this, &UOdinClientComponent::OnOdinErrorHandler);
 
-	UE_LOG(LogTemp, Warning, TEXT("Joining Room with PlayerId: %s"), *PlayerId.ToString())
-
-	UOdinJsonObject* JSON = UOdinJsonObject::ConstructJsonObject(this);
-	JSON->SetStringField(TEXT("PlayerId"), *PlayerId.ToString());
-
-	const TArray<uint8> UserData = JSON->EncodeJsonBytes();
-	UOdinRoomJoin* Action = UOdinRoomJoin::JoinRoom(this, Room, TEXT("https://gateway.odin.4players.io"), RoomToken,
-	                                                UserData, FVector(0, 0, 0), OnRoomJoinError, OnRoomJoinSuccess);
-	Action->Activate();
+	if (!bSuccess)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to initiate connection."));
+	}
 }

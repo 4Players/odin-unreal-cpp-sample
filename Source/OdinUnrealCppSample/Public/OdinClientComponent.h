@@ -5,8 +5,8 @@
 #include "OdinTokenGenerator.h"
 #include "OdinRoom.h"
 #include "CoreMinimal.h"
-#include "OdinAudioCapture.h"
 #include "Components/ActorComponent.h"
+#include "OdinAudio/OdinAudioCapture.h"
 #include "OdinClientComponent.generated.h"
 
 
@@ -20,9 +20,6 @@ public:
 	UOdinClientComponent();
 
 protected:
-	// Called when the game starts
-	virtual void BeginPlay() override;
-
 	UPROPERTY()
 	UOdinTokenGenerator* TokenGenerator;
 
@@ -32,30 +29,20 @@ protected:
 	UPROPERTY()
 	UOdinRoom* Room;
 
-	UPROPERTY()
-	FOdinApmSettings ApmSettings;
+	UFUNCTION()
+	void OnRoomJoinSuccessHandler(UOdinRoom* OdinRoom,  FOdinJoined Data);
 
 	UFUNCTION()
-	void OnRoomJoinSuccessHandler(FString RoomId, const TArray<uint8>& RoomUserData, FString Customer, int64 OwnPeerId,
-	                              FString OwnUserId);
-
-	UFUNCTION()
-	void OnPeerJoinedHandler(int64 PeerId, FString UserId, const TArray<uint8>& UserData, UOdinRoom* OdinRoom);
-
-	UFUNCTION()
-	void OnMediaAddedHandler(int64 PeerId, UOdinPlaybackMedia* Media, UOdinJsonObject* Properties, UOdinRoom* OdinRoom);
+	void OnPeerJoinedHandler(UOdinRoom* OdinRoom, FOdinPeerJoined PeerData);
 
 	UFUNCTION()
 	void OnOdinErrorHandler(int64 ErrorCode);
 
-	FOdinRoomJoinError OnRoomJoinError;
-	FOdinRoomJoinSuccess OnRoomJoinSuccess;
-
-	FOdinRoomAddMediaError OnAddMediaError;
-	FOdinRoomAddMediaSuccess OnAddMediaSuccess;
-
 	UPROPERTY()
 	UOdinAudioCapture* Capture;
+	
+	UPROPERTY()
+	UOdinEncoder* Encoder;
 
 public:
 	void ConnectToOdin(FGuid PlayerId);
