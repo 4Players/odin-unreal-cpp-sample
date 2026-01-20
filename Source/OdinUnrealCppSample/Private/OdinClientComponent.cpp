@@ -142,7 +142,7 @@ void UOdinClientComponent::OnOdinErrorHandler(int64 ErrorCode)
 
 void UOdinClientComponent::ConnectToOdin(FGuid PlayerId)
 {
-	TokenGenerator = UOdinTokenGenerator::ConstructTokenGenerator(this, "AQGEYTtGuFdlq6Msk+bO9ki6dDJ+fG8UmjfZD+VZOuUt");
+	TokenGenerator = UOdinTokenGenerator::ConstructTokenGenerator(this, "<YOUR_ACCESS_KEY>");
 	UOdinJsonObject* AuthJson;
 	TokenGenerator->GenerateRoomToken("TestRoom", "Player", AuthJson, RoomToken);
 	UE_LOG(LogTemp, Warning, TEXT("Start connecting with token: %s"), *RoomToken);
