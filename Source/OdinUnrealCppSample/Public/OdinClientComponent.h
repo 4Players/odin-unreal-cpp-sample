@@ -35,9 +35,6 @@ protected:
 	UFUNCTION()
 	void OnPeerJoinedHandler(UOdinRoom* OdinRoom, FOdinPeerJoined PeerData);
 
-	UFUNCTION()
-	void OnOdinErrorHandler(int64 ErrorCode);
-
 	UPROPERTY()
 	UOdinAudioCapture* Capture;
 	

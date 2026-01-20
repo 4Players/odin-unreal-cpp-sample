@@ -49,7 +49,7 @@ void UOdinClientComponent::OnPeerJoinedHandler(UOdinRoom* OdinRoom, FOdinPeerJoi
 		{
 			GameInstance->OdinPlayerCharacters.Add(PeerData.peer_id, Character);
 
-			// Create Decoder for this Peer
+			// Create a Decoder with 48000hz sample rate and choose the Channel mode (true for stereo, false for mono)
 			UOdinDecoder* Decoder = UOdinDecoder::ConstructDecoder(this, 48000, true);
 
 			// Register the decoder to the room and peer
@@ -59,10 +59,8 @@ void UOdinClientComponent::OnPeerJoinedHandler(UOdinRoom* OdinRoom, FOdinPeerJoi
 			UActorComponent* Comp = Character->AddComponentByClass(UOdinSynthComponent::StaticClass(), false,
 			                                                       FTransform::Identity, false);
 			UOdinSynthComponent* Synth = Cast<UOdinSynthComponent>(Comp);
-
 			// Assign Decoder to Synth
 			Synth->SetDecoder(Decoder);
-
 
 			// Here we need to set any wanted attenuation settings
 			FSoundAttenuationSettings AttenuationSettings;
@@ -134,12 +132,6 @@ void UOdinClientComponent::OnRoomJoinSuccessHandler(UOdinRoom* OdinRoom, FOdinJo
 	Capture->StartCapturingAudio();
 }
 
-void UOdinClientComponent::OnOdinErrorHandler(int64 ErrorCode)
-{
-	const FString ErrorString = UOdinFunctionLibrary::FormatOdinError((EOdinError)ErrorCode, true);
-	UE_LOG(LogTemp, Error, TEXT("%s"), *ErrorString);
-}
-
 void UOdinClientComponent::ConnectToOdin(FGuid PlayerId)
 {
 	TokenGenerator = UOdinTokenGenerator::ConstructTokenGenerator(this, "<YOUR_ACCESS_KEY>");
@@ -162,8 +154,7 @@ void UOdinClientComponent::ConnectToOdin(FGuid PlayerId)
 	// Connect with generated room token and initial user data
 	bool bSuccess = false;
 	Room->ConnectRoom("https://gateway.odin.4players.io", AuthJson->EncodeJson(), bSuccess);
-
-
+	
 	if (!bSuccess)
 	{
 		UE_LOG(LogTemp, Error, TEXT("Failed to initiate connection."));
