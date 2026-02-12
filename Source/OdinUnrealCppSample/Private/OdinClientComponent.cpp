@@ -25,7 +25,7 @@ UOdinClientComponent::UOdinClientComponent()
 void UOdinClientComponent::OnPeerJoinedHandler(UOdinRoom* OdinRoom, FOdinPeerJoined PeerData)
 {
 	// create Json Object from User Data Byte Array
-	const auto JSON = UOdinJsonObject::ConstructJsonObjectFromString(this, PeerData.user_data);
+	const auto JSON = UOdinJsonObject::ConstructJsonObjectFromBytes(this, PeerData.user_data);
 	// Get Guid String from Json
 	const FString GUIDString = JSON->GetStringField(TEXT("PlayerId"));
 
@@ -97,8 +97,9 @@ void UOdinClientComponent::OnRoomJoinSuccessHandler(UOdinRoom* OdinRoom, FOdinJo
 	// Use the new V2 Audio Pipeline to configure APM (Echo Cancellation, Noise Suppression, etc.)
 	if (UOdinPipeline* Pipeline = Encoder->GetOrCreatePipeline())
 	{
+		
 		// Insert APM effect at the start of the pipeline (Index 0)
-		const int32 ApmId = Pipeline->InsertApmEffect(0, 48000, true);
+		const int32 ApmId = Pipeline->InsertApmEffect(0, Encoder->SampleRate, Encoder->bStereo);
 
 		FOdinApmConfig ApmConfig;
 		ApmConfig.echo_canceller = false;
@@ -135,8 +136,14 @@ void UOdinClientComponent::OnRoomJoinSuccessHandler(UOdinRoom* OdinRoom, FOdinJo
 void UOdinClientComponent::ConnectToOdin(FGuid PlayerId)
 {
 	TokenGenerator = UOdinTokenGenerator::ConstructTokenGenerator(this, "<YOUR_ACCESS_KEY>");
-	UOdinJsonObject* AuthJson;
+	UOdinJsonObject* AuthJson = nullptr;
 	TokenGenerator->GenerateRoomToken("TestRoom", "Player", AuthJson, RoomToken);
+	if (!AuthJson)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Generate room token failed, stopping connection process. Please check your Access Key."));
+		return;
+
+	}
 	UE_LOG(LogTemp, Warning, TEXT("Start connecting with token: %s"), *RoomToken);
 
 	Room = UOdinRoom::ConstructRoom(this);
@@ -149,7 +156,7 @@ void UOdinClientComponent::ConnectToOdin(FGuid PlayerId)
 	UserDataObject->SetStringField("PlayerId", *PlayerId.ToString());
 
 	// Add user data to authentication object
-	AuthJson->SetObjectField("user_data", UserDataObject);
+	AuthJson->SetStringField("user_data", UserDataObject->EncodeJson());
 
 	// Connect with generated room token and initial user data
 	bool bSuccess = false;
