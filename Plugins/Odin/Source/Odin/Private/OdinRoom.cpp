@@ -404,7 +404,6 @@ void UOdinRoom::HandleOdinEventRpc(OdinRoom *RoomHandle, const FString &JsonStri
                 }
 
                 FOdinPeerJoinedDelegate Delegate = room->OnRoomPeerJoinedBP;
-                
                 if (Delegate.IsBound()) {
                     Delegate.Broadcast(room.Get(), data);
                 }

@@ -102,7 +102,7 @@ void UOdinClientComponent::OnRoomJoinSuccessHandler(UOdinRoom* OdinRoom, FOdinJo
 		const int32 ApmId = Pipeline->InsertApmEffect(0, Encoder->SampleRate, Encoder->bStereo);
 
 		FOdinApmConfig ApmConfig;
-		ApmConfig.echo_canceller = false;
+		ApmConfig.echo_canceller = true;
 		ApmConfig.noise_suppression = EOdinNoiseSuppression::ODIN_NOISE_SUPPRESSION_MODERATE;
 		ApmConfig.high_pass_filter = true;
 		ApmConfig.gain_controller = EOdinGainControllerVersion::ODIN_GAIN_CONTROLLER_V2;
