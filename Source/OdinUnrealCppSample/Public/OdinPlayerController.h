@@ -15,7 +15,7 @@ public:
 	// Sets default values for this component's properties
 	AOdinPlayerController();
 
-private:
-	UPROPERTY(VisibleAnywhere)
+protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Odin")
 	UOdinClientComponent* OdinClient;
 };
