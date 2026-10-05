@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinAudio/OdinDecoder.h"
 #include "OdinCore/include/odin.h"
@@ -11,9 +11,7 @@
 
 UOdinDecoder::UOdinDecoder(const class FObjectInitializer &PCIP)
     : Super(PCIP)
-{
-    ODIN_LOG(Verbose, "%s", ANSI_TO_TCHAR(__FUNCTION__));
-}
+{ ODIN_LOG(Verbose, "%s", ANSI_TO_TCHAR(__FUNCTION__)); }
 
 void UOdinDecoder::SetHandle(OdinDecoder *NewHandle)
 {
@@ -29,6 +27,10 @@ void UOdinDecoder::SetHandle(OdinDecoder *NewHandle)
     if (IsValid(Handle)) {
         Handle->SetHandle(NewHandle);
     }
+    {
+        FScopeLock CellLock(&HandleCell->Lock);
+        HandleCell->Handle = NewHandle;
+    }
     if (nullptr != NewHandle) {
         if (UOdinSubsystem *OdinSubsystem = UOdinSubsystem::Get()) {
             OdinSubsystem->RegisterDecoderObject(this);
@@ -39,8 +41,23 @@ void UOdinDecoder::SetHandle(OdinDecoder *NewHandle)
 void UOdinDecoder::BeginDestroy()
 {
     ODIN_LOG(Verbose, "%s", ANSI_TO_TCHAR(__FUNCTION__));
+    ReleaseNativeReferences();
     FreeDecoderInternal(GetNativeHandle());
     Super::BeginDestroy();
+}
+
+void UOdinDecoder::ReleaseNativeReferences()
+{
+    {
+        // waits for a sound generator that is still popping from the decoder
+        FScopeLock CellLock(&HandleCell->Lock);
+        HandleCell->Handle = nullptr;
+    }
+    // the native pipeline is owned by the decoder and freed along with it
+    if (Pipeline) {
+        Pipeline->InvalidateHandle();
+        Pipeline = nullptr;
+    }
 }
 
 UOdinDecoder *UOdinDecoder::ConstructDecoder(UObject *WorldContextObject, OdinDecoder *Handle)
@@ -85,10 +102,11 @@ bool UOdinDecoder::FreeDecoder(UOdinDecoder *Decoder)
     TRACE_CPUPROFILER_EVENT_SCOPE(UOdinDecoder::FreeDecoder);
 
     if (!IsValid(Decoder)) {
-        ODIN_LOG(Verbose, TEXT("Aborted FreeDecoder due to invalid UOdinDecoder Pointer."));
+        ODIN_LOG(Verbose, "Aborted FreeDecoder due to invalid UOdinDecoder Pointer.");
         return false;
     }
 
+    Decoder->ReleaseNativeReferences();
     const auto bResult = FreeDecoderInternal(Decoder->GetNativeHandle());
     if (bResult) {
         Decoder->SetHandle(nullptr);
@@ -102,7 +120,7 @@ bool UOdinDecoder::FreeDecoderInternal(OdinDecoder *DecoderHandle)
     TRACE_CPUPROFILER_EVENT_SCOPE(UOdinDecoder::FreeDecoderInternal);
 
     if (DecoderHandle == nullptr) {
-        ODIN_LOG(Verbose, TEXT("Aborted FreeDecoderInternal due to invalid OdinDecoder Pointer."));
+        ODIN_LOG(Verbose, "Aborted FreeDecoderInternal due to invalid OdinDecoder Pointer.");
         return false;
     }
 
@@ -140,9 +158,7 @@ UOdinPipeline *UOdinDecoder::GetOrCreatePipeline()
 }
 
 bool UOdinDecoder::GetIsSilent() const
-{
-    return odin_decoder_is_silent(this->GetNativeHandle());
-}
+{ return odin_decoder_is_silent(this->GetNativeHandle()); }
 
 bool UOdinDecoder::SetAudioEventHandler(int EFilter)
 {
@@ -165,7 +181,10 @@ void UOdinDecoder::HandleOdinAudioEventCallback(OdinDecoder *DecoderHandle, cons
 
     FFunctionGraphTask::CreateAndDispatchWhenReady(
         [DecoderHandle, filter, Events]() {
-            const UOdinSubsystem        *OdinSubsystem    = UOdinSubsystem::Get();
+            const UOdinSubsystem *OdinSubsystem = UOdinSubsystem::Get();
+            if (OdinSubsystem == nullptr) {
+                return;
+            }
             TWeakObjectPtr<UOdinDecoder> DecoderObjectPtr = OdinSubsystem->GetDecoderByHandle(DecoderHandle);
             if (!DecoderObjectPtr.IsValid() || DecoderObjectPtr.IsStale(true, true)) {
                 ODIN_LOG(VeryVerbose,
@@ -198,8 +217,10 @@ TArray<FOdinPosition> UOdinDecoder::GetPositions(FOdinChannelMask channelMask) c
     auto          Result       = odin_decoder_get_positions(this->GetNativeHandle(), channelMask, Buffer, &NumPositions);
     if (Result != OdinError::ODIN_ERROR_SUCCESS) {
         FOdinModule::LogErrorCode("Aborting GetPositions due to invalid odin_decoder_get_positions call: %s", Result);
+        Positions.Empty();
     } else {
         ODIN_LOG(Verbose, "Received %d positions.", NumPositions);
+        Positions.SetNum(NumPositions);
     }
 
     return Positions;

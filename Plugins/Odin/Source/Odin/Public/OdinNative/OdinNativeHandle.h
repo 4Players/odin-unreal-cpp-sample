@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #pragma once
 
@@ -19,19 +19,13 @@ class ODIN_API UOdinHandle : public UObject
 
   public:
     inline void *GetHandle() const
-    {
-        return handle_;
-    }
+    { return handle_; }
 
     inline void SetHandle(void *handle)
-    {
-        handle_ = handle;
-    }
+    { handle_ = handle; }
 
     inline void Invalidate()
-    {
-        this->handle_ = nullptr;
-    }
+    { this->handle_ = nullptr; }
 
     /**
      * UOdinHandle represents a decoder for media streams from remote voice chat clients, which encapsulates all
@@ -80,18 +74,18 @@ class ODIN_API UOdinHandle : public UObject
      */
     UOdinHandle(OdinCipher *handle);
     /**
+     * UOdinHandle represents a room socket; Note: on any reconnect the socket handle must be re-created.
+     */
+    UOdinHandle(OdinSocket *handle);
+    /**
      * Uninitialized handle
      */
     UOdinHandle()
-    {
-        Invalidate();
-    }
+    { Invalidate(); }
 
   protected:
     UOdinHandle(void *handle)
-    {
-        handle_ = handle;
-    }
+    { handle_ = handle; }
 
   private:
     void *handle_ = nullptr;

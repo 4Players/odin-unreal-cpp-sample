@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2023 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinJsonObject.h"
 
@@ -14,14 +14,10 @@ using namespace OdinUtility;
 
 UOdinJsonObject::UOdinJsonObject(const class FObjectInitializer &PCIP)
     : Super(PCIP)
-{
-    Reset();
-}
+{ Reset(); }
 
 UOdinJsonObject *UOdinJsonObject::ConstructJsonObject(UObject *WorldContextObject)
-{
-    return NewObject<UOdinJsonObject>();
-}
+{ return NewObject<UOdinJsonObject>(); }
 
 UOdinJsonObject *UOdinJsonObject::ConstructJsonObjectFromString(UObject *WorldContextObject, const FString &Data)
 {
@@ -48,14 +44,10 @@ void UOdinJsonObject::Reset()
 }
 
 TSharedPtr<FJsonObject> &UOdinJsonObject::GetRootObject()
-{
-    return JsonObj;
-}
+{ return JsonObj; }
 
 void UOdinJsonObject::SetRootObject(const TSharedPtr<FJsonObject> &JsonObject)
-{
-    JsonObj = JsonObject;
-}
+{ JsonObj = JsonObject; }
 
 FString UOdinJsonObject::EncodeJson() const
 {
@@ -103,7 +95,10 @@ TArray<FString> UOdinJsonObject::GetFieldNames() const
         return Result;
     }
 
-    JsonObj->Values.GetKeys(Result);
+    Result.Reserve(JsonObj->Values.Num());
+    for (const auto &Pair : JsonObj->Values) {
+        Result.Add(FString(Pair.Key));
+    }
 
     return Result;
 }
@@ -142,7 +137,7 @@ UOdinJsonValue *UOdinJsonObject::GetField(const FString &FieldName) const
 
 void UOdinJsonObject::SetField(const FString &FieldName, UOdinJsonValue *JsonValue)
 {
-    if (!JsonObj.IsValid()) {
+    if (!JsonObj.IsValid() || !IsValid(JsonValue)) {
         return;
     }
 
@@ -241,6 +236,9 @@ void UOdinJsonObject::SetArrayField(const FString &FieldName, const TArray<UOdin
     TArray<TSharedPtr<FJsonValue>> ValArray;
 
     for (auto InVal : InArray) {
+        if (!IsValid(InVal)) {
+            continue;
+        }
         TSharedPtr<FJsonValue> JsonVal = InVal->GetRootValue();
 
         switch (InVal->GetType()) {
@@ -281,6 +279,10 @@ void UOdinJsonObject::SetArrayField(const FString &FieldName, const TArray<UOdin
 
 void UOdinJsonObject::MergeJsonObject(UOdinJsonObject *InJsonObject, bool Overwrite)
 {
+    if (!IsValid(InJsonObject)) {
+        return;
+    }
+
     TArray<FString> Keys = InJsonObject->GetFieldNames();
 
     for (auto Key : Keys) {
@@ -308,7 +310,7 @@ UOdinJsonObject *UOdinJsonObject::GetObjectField(const FString &FieldName) const
 
 void UOdinJsonObject::SetObjectField(const FString &FieldName, UOdinJsonObject *JsonObject)
 {
-    if (!JsonObj.IsValid()) {
+    if (!JsonObj.IsValid() || !IsValid(JsonObject)) {
         return;
     }
 
@@ -438,6 +440,9 @@ void UOdinJsonObject::SetObjectArrayField(const FString &FieldName, const TArray
     TArray<TSharedPtr<FJsonValue>> EntriesArray;
 
     for (auto Value : ObjectArray) {
+        if (!IsValid(Value)) {
+            continue;
+        }
         EntriesArray.Add(MakeShareable(new FJsonValueObject(Value->GetRootObject())));
     }
 

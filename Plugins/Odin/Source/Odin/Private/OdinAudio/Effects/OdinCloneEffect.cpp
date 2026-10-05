@@ -1,18 +1,14 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinAudio/Effects/OdinCloneEffect.h"
 #include "Async/TaskGraphInterfaces.h"
 
 UOdinCloneEffect::UOdinCloneEffect(const FObjectInitializer &PCIP)
     : Super(PCIP)
-{
-    UserData = TOdinCustomEffectUserData(this);
-}
+{ UserData = TOdinCustomEffectUserData(this); }
 
 void UOdinCloneEffect::BeginDestroy()
-{
-    Super::BeginDestroy();
-}
+{ Super::BeginDestroy(); }
 
 UOdinCloneEffect *UOdinCloneEffect::ConstructCloneEffect(UObject *WorldContextObject)
 {

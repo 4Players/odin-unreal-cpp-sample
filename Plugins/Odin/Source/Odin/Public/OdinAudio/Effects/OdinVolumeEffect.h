@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 #pragma once
 
 #include "OdinCustomEffect.h"
@@ -26,7 +26,7 @@ class ODIN_API UOdinVolumeEffect : public UOdinCustomEffect
 
     UFUNCTION(BlueprintCallable,
               meta     = (DisplayName = "Construct Volume Effect", ToolTip = "Creates a new Volume effect to change the buffer audio level",
-                      HidePin = "WorldContextObject", DefaultToSelf = "WorldContextObject"),
+                          HidePin = "WorldContextObject", DefaultToSelf = "WorldContextObject"),
               Category = "Odin|Audio Pipeline|Effects")
     static UOdinVolumeEffect* ConstructVolumeEffect(UObject* WorldContextObject, float scale = 1.0f);
 
@@ -35,6 +35,7 @@ class ODIN_API UOdinVolumeEffect : public UOdinCustomEffect
     UPROPERTY(BlueprintReadWrite, Category = "Odin|Audio Pipeline|State")
     float ScaleExponent = 1.0;
 
+    /** If set, SampleScale is a gain in decibels (e.g. -6 halves the amplitude) instead of a linear factor. */
     UPROPERTY(BlueprintReadWrite, Category = "Odin|Audio Pipeline|State")
     bool VolumeLog10 = false;
 

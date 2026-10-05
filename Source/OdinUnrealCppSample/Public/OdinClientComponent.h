@@ -2,13 +2,15 @@
 
 #pragma once
 
-#include "OdinTokenGenerator.h"
-#include "OdinRoom.h"
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "OdinAudio/OdinAudioCapture.h"
+#include "OdinRoom.h"
 #include "OdinClientComponent.generated.h"
 
+class UOdinAudioCapture;
+class UOdinDecoder;
+class UOdinEncoder;
+class UOdinSynthComponent;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class ODINUNREALCPPSAMPLE_API UOdinClientComponent : public UActorComponent
@@ -16,31 +18,52 @@ class ODINUNREALCPPSAMPLE_API UOdinClientComponent : public UActorComponent
 	GENERATED_BODY()
 
 public:
-	// Sets default values for this component's properties
 	UOdinClientComponent();
 
+	/** Sample-only credential. In production, obtain room tokens from a trusted backend instead. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Odin|Authentication")
+	FString AccessKey;
+
+	/** Connect using AccessKey. The sample character also calls this automatically after receiving its PlayerId. */
+	UFUNCTION(BlueprintCallable, Category = "Odin")
+	void ConnectToOdin(FGuid PlayerId);
+
+	/** Stop local and remote audio and leave the room. */
+	UFUNCTION(BlueprintCallable, Category = "Odin")
+	void DisconnectFromOdin();
+
 protected:
-	UPROPERTY()
-	UOdinTokenGenerator* TokenGenerator;
-
-	UPROPERTY()
-	FString RoomToken;
-
-	UPROPERTY()
-	UOdinRoom* Room;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UFUNCTION()
-	void OnRoomJoinSuccessHandler(UOdinRoom* OdinRoom,  FOdinJoined Data);
+	void OnRoomJoinSuccessHandler(UOdinRoom* OdinRoom, FOdinJoined Data);
 
 	UFUNCTION()
 	void OnPeerJoinedHandler(UOdinRoom* OdinRoom, FOdinPeerJoined PeerData);
 
-	UPROPERTY()
-	UOdinAudioCapture* Capture;
-	
-	UPROPERTY()
-	UOdinEncoder* Encoder;
+	UFUNCTION()
+	void OnPeerLeftHandler(UOdinRoom* OdinRoom, FOdinPeerLeft PeerData);
 
-public:
-	void ConnectToOdin(FGuid PlayerId);
+	UFUNCTION()
+	void OnRoomErrorHandler(UOdinRoom* OdinRoom, FOdinError Data);
+
+private:
+	void CleanupLocalAudio();
+	void CleanupPeerAudio(int64 PeerId);
+
+	UPROPERTY(Transient)
+	UOdinRoom* Room = nullptr;
+
+	UPROPERTY(Transient)
+	UOdinAudioCapture* Capture = nullptr;
+
+	UPROPERTY(Transient)
+	UOdinEncoder* Encoder = nullptr;
+
+	// Keep the decoders alive independently of synth components owned by remote characters.
+	UPROPERTY(Transient)
+	TMap<int64, UOdinDecoder*> PeerDecoders;
+
+	UPROPERTY(Transient)
+	TMap<int64, UOdinSynthComponent*> PeerSynths;
 };

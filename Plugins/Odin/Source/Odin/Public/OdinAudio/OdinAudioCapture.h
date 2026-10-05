@@ -1,4 +1,4 @@
-﻿/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #pragma once
 
@@ -32,8 +32,6 @@ struct ODIN_API FOdinCaptureDeviceInfo {
 };
 
 DECLARE_DYNAMIC_DELEGATE_TwoParams(FGetCaptureDeviceDelegate, const TArray<FOdinCaptureDeviceInfo>&, OutDevices, const FOdinCaptureDeviceInfo&, CurrentDevice);
-
-DECLARE_DYNAMIC_DELEGATE_OneParam(FChangeCaptureDeviceDelegate, bool, bSuccess);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCaptureDeviceChange);
 
@@ -157,30 +155,31 @@ class ODIN_API UOdinAudioCapture : public UAudioCapture, public FTickableGameObj
     UPROPERTY(BlueprintAssignable, Category = "Odin|Audio Capture")
     FCaptureDeviceChange OnDefaultDeviceChanged;
 
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCaptureDeviceChangedWithDetails, const FOdinCaptureDeviceInfo&, PreviousDevice, const FOdinCaptureDeviceInfo&,
+                                                 NewDevice);
+
+    /**
+     *
+     */
+    UPROPERTY(BlueprintAssignable, Category = "Odin|Audio Capture")
+    FCaptureDeviceChangedWithDetails OnCaptureDeviceChanged;
+
 #pragma region FTickableGameObject
     virtual void Tick(float DeltaTime) override;
 
     virtual bool IsTickable() const override;
 
     virtual ETickableTickType GetTickableTickType() const override
-    {
-        return ETickableTickType::Conditional;
-    }
+    { return ETickableTickType::Conditional; }
 
     virtual TStatId GetStatId() const override
-    {
-        RETURN_QUICK_DECLARE_CYCLE_STAT(UOdinAudioCapture, STATGROUP_Tickables);
-    }
+    { RETURN_QUICK_DECLARE_CYCLE_STAT(UOdinAudioCapture, STATGROUP_Tickables); }
 
     virtual bool IsTickableWhenPaused() const override
-    {
-        return true;
-    }
+    { return true; }
 
     virtual bool IsTickableInEditor() const override
-    {
-        return false;
-    }
+    { return false; }
 #pragma endregion
 
   protected:
@@ -202,9 +201,6 @@ class ODIN_API UOdinAudioCapture : public UAudioCapture, public FTickableGameObj
     template <typename DeviceCheck> bool ChangeCaptureDevice(const DeviceCheck& DeviceCheckFunction);
 
     void InitializeGenerator();
-
-    void TryRunAsyncChangeDeviceRequest(FChangeCaptureDeviceDelegate OnChangeCompleted, TFunction<void()> ChangeDeviceFunction);
-    void FinalizeCaptureDeviceChange(FChangeCaptureDeviceDelegate OnChangeCompleted, bool& bSuccess);
 
     void TryRetrieveDefaultDevice();
 
@@ -261,7 +257,6 @@ class ODIN_API UOdinAudioCapture : public UAudioCapture, public FTickableGameObj
     UPROPERTY(BlueprintReadOnly, Category = "Odin|Audio Capture")
     FOdinCaptureDeviceInfo CurrentSelectedDevice;
 
-    double          LastStreamTime            = -1.0f;
-    double          TimeWithoutStreamUpdate   = 0.0f;
-    FThreadSafeBool IsCurrentlyChangingDevice = false;
+    double LastStreamTime          = -1.0f;
+    double TimeWithoutStreamUpdate = 0.0f;
 };

@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2023 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #pragma once
 #include "CoreMinimal.h"
@@ -24,6 +24,15 @@ class ODIN_API UOdinTokenGenerator : public UObject
   public:
     UOdinTokenGenerator(const class FObjectInitializer& PCIP);
 
+    virtual void BeginDestroy() override;
+
+    /**
+     * Frees the native token generator (if any) and invalidates the handle wrapper in place.
+     * Safe to call during destruction; every path that frees the native handle must go through
+     * this, so the handle cannot be freed twice.
+     */
+    void ReleaseHandle();
+
     /**
      * Constructs a new instance of the UOdinTokenGenerator class. This method is used
      * to initialize a token generator object with a specified access key for generating
@@ -36,7 +45,7 @@ class ODIN_API UOdinTokenGenerator : public UObject
      */
     UFUNCTION(BlueprintCallable,
               meta     = (DisplayName = "Construct Token Generator", ToolTip = "Creates a new generator for signed authentication tokens",
-                      HidePin = "WorldContextObject", DefaultToSelf = "WorldContextObject"),
+                          HidePin = "WorldContextObject", DefaultToSelf = "WorldContextObject"),
               Category = "Odin|Authentication")
     static UOdinTokenGenerator* ConstructTokenGenerator(UObject* WorldContextObject, const FString& AccessKey);
 
@@ -77,9 +86,7 @@ class ODIN_API UOdinTokenGenerator : public UObject
                                 const FString& Subject = "", const FString& Address = "", const FString& Upstream = "", const int32 Leeway = 300) const;
 
     inline OdinTokenGenerator* GetHandle() const
-    {
-        return IsValid(handle_) ? reinterpret_cast<OdinTokenGenerator*>(handle_->GetHandle()) : nullptr;
-    }
+    { return IsValid(handle_) ? reinterpret_cast<OdinTokenGenerator*>(handle_->GetHandle()) : nullptr; }
 
     inline void SetHandle(OdinTokenGenerator* handle)
     {

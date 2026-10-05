@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 #pragma once
 
 #include "OdinCustomEffect.h"
@@ -27,7 +27,7 @@ class ODIN_API UOdinActivityEffect : public UOdinCustomEffect
 
     UFUNCTION(BlueprintCallable,
               meta     = (DisplayName = "Construct Activity Effect", ToolTip = "Creates a new Activity effect", HidePin = "WorldContextObject",
-                      DefaultToSelf = "WorldContextObject"),
+                          DefaultToSelf = "WorldContextObject"),
               Category = "Odin|Audio Pipeline|Effects")
     static UOdinActivityEffect* ConstructActivityEffect(UObject* WorldContextObject);
 

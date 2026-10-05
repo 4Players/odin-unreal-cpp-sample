@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2023 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #pragma once
 
@@ -9,6 +9,7 @@
 
 class IAudioBufferListener;
 class UOdinDecoder;
+struct FOdinDecoderHandleCell;
 
 /**
  * FOdinSoundGenerator
@@ -77,12 +78,11 @@ class ODIN_API FOdinSoundGenerator : public ISoundGenerator
     virtual bool IsFinished() const override;
 
   private:
-    TWeakObjectPtr<UOdinHandle>            OdinDecoderHandle;
     TArray<TWeakPtr<IAudioBufferListener>> AudioBufferListeners;
     FCriticalSection                       CriticalSectionAudioBufferListeners;
 
-    OdinDecoder*     NativeDecoderHandle;
-    FCriticalSection NativeHandleAccessSection;
+    TSharedPtr<FOdinDecoderHandleCell, ESPMode::ThreadSafe> DecoderCell;
+    FCriticalSection                                        NativeHandleAccessSection;
 
     FThreadSafeBool bIsFinished;
 

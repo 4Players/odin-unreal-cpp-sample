@@ -1,14 +1,70 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinAudio/OdinEncoder.h"
 
 #include "AudioDevice.h"
 #include "OdinFunctionLibrary.h"
+#include "OdinRoom.h"
 #include "OdinSubsystem.h"
 #include "OdinVoice.h"
 #include "SampleBuffer.h"
 #include "OdinAudio/OdinPipeline.h"
 #include "Runtime/Launch/Resources/Version.h"
+
+namespace
+{
+void ConvertChannelsInterleaved(const float* InSamples, const uint32 NumSamples, const int32 InChannels, const int32 OutChannels, TArray<float>& OutSamples)
+{
+    constexpr float K = 0.70710678f; // -3 dB for center/surround contributions
+
+    const int32 NumFrames = NumSamples / InChannels;
+    OutSamples.Reset();
+    OutSamples.Reserve(NumFrames * OutChannels);
+
+    for (int32 Frame = 0; Frame < NumFrames; ++Frame) {
+        const float* In = InSamples + Frame * InChannels;
+
+        // fold the input frame to stereo first (UE channel order: FL FR FC LFE (BL BR) SL SR)
+        float Left, Right;
+        if (InChannels == 1) {
+            Left = Right = In[0];
+        } else if (InChannels == 2) {
+            Left  = In[0];
+            Right = In[1];
+        } else if (InChannels == 6) {
+            constexpr float Scale = 1.0f / (1.0f + 2.0f * K);
+            Left                  = (In[0] + K * In[2] + K * In[4]) * Scale;
+            Right                 = (In[1] + K * In[2] + K * In[5]) * Scale;
+        } else if (InChannels == 8) {
+            constexpr float Scale = 1.0f / (1.0f + 3.0f * K);
+            Left                  = (In[0] + K * In[2] + K * In[4] + K * In[6]) * Scale;
+            Right                 = (In[1] + K * In[2] + K * In[5] + K * In[7]) * Scale;
+        } else {
+            // unknown layout: average alternating channels
+            float SumLeft = 0.0f, SumRight = 0.0f;
+            int32 NumLeft = 0, NumRight = 0;
+            for (int32 Channel = 0; Channel < InChannels; ++Channel) {
+                if (Channel & 1) {
+                    SumRight += In[Channel];
+                    ++NumRight;
+                } else {
+                    SumLeft += In[Channel];
+                    ++NumLeft;
+                }
+            }
+            Left  = NumLeft > 0 ? SumLeft / NumLeft : 0.0f;
+            Right = NumRight > 0 ? SumRight / NumRight : 0.0f;
+        }
+
+        if (OutChannels == 1) {
+            OutSamples.Add(FMath::Clamp(0.5f * (Left + Right), -1.0f, 1.0f));
+        } else {
+            OutSamples.Add(FMath::Clamp(Left, -1.0f, 1.0f));
+            OutSamples.Add(FMath::Clamp(Right, -1.0f, 1.0f));
+        }
+    }
+}
+} // namespace
 
 UOdinEncoder::UOdinEncoder(const class FObjectInitializer& PCIP)
     : Super(PCIP)
@@ -24,9 +80,6 @@ void UOdinEncoder::BeginDestroy()
     }
     this->AudioGenerator = nullptr;
     FreeEncoder(this);
-    if (Pipeline) {
-        Pipeline->OnApmConfigChanged.RemoveDynamic(this, &UOdinEncoder::OnPipelineApmConfigChanged);
-    }
     if (SubmixListener.IsValid()) {
         SubmixListener->DetachFromSubmix();
         SubmixListener.Reset();
@@ -65,6 +118,7 @@ UOdinEncoder* UOdinEncoder::CreateEncoder(int64 InPeerId, int32 InSampleRate, bo
 
     OdinEncoder* encoder = this->GetHandle();
     if (encoder != nullptr) {
+        ReleasePipeline();
         FreeEncoderHandle(encoder);
     }
 
@@ -92,8 +146,10 @@ UOdinEncoder* UOdinEncoder::CreateEncoderEx(int64 InConnectedPeerId, int32 InSam
     TRACE_CPUPROFILER_EVENT_SCOPE(UOdinEncoder::CreateEncoderEx);
 
     OdinEncoder* encoder = this->GetHandle();
-    if (encoder != nullptr)
+    if (encoder != nullptr) {
+        ReleasePipeline();
         FreeEncoderHandle(encoder);
+    }
 
     this->PeerId     = InConnectedPeerId;
     this->SampleRate = InSampleRate;
@@ -123,9 +179,7 @@ bool UOdinEncoder::FreeEncoder(UOdinEncoder* Encoder)
         return false;
     }
 
-    if (Encoder->SubmixListener.IsValid()) {
-        Encoder->SubmixListener->DetachFromSubmix();
-    }
+    Encoder->ReleasePipeline();
 
     const bool Result = FreeEncoderHandle(Encoder->GetHandle());
     if (Result) {
@@ -146,10 +200,25 @@ bool UOdinEncoder::FreeEncoderHandle(OdinEncoder* Handle)
 
     if (UOdinSubsystem* const& OdinSubsystem = UOdinSubsystem::Get()) {
         OdinSubsystem->UnlinkEncoder(Handle);
+        OdinSubsystem->DeregisterEncoder(Handle);
     }
 
     odin_encoder_free(Handle);
     return true;
+}
+
+void UOdinEncoder::ReleasePipeline()
+{
+    if (SubmixListener.IsValid()) {
+        SubmixListener->DetachFromSubmix();
+        // the submix may still deliver a buffer after detaching, this waits for it to finish with the pipeline
+        SubmixListener->ClearPipelineHandle();
+    }
+    if (Pipeline) {
+        Pipeline->OnApmConfigChanged.RemoveDynamic(this, &UOdinEncoder::OnPipelineApmConfigChanged);
+        Pipeline->InvalidateHandle();
+        Pipeline = nullptr;
+    }
 }
 
 UOdinPipeline* UOdinEncoder::GetOrCreateEncoderPipeline(UOdinEncoder* Encoder)
@@ -185,16 +254,35 @@ UOdinPipeline* UOdinEncoder::GetOrCreatePipeline()
 }
 
 bool UOdinEncoder::GetIsSilent() const
+{ return odin_encoder_is_silent(this->GetHandle()); }
+
+TArray<UOdinRoom*> UOdinEncoder::GetLinkedRooms() const
 {
-    return odin_encoder_is_silent(this->GetHandle());
+    TArray<UOdinRoom*> Rooms;
+    if (const UOdinSubsystem* OdinSubsystem = UOdinSubsystem::Get()) {
+        for (const TWeakObjectPtr<UOdinRoom>& Room : OdinSubsystem->GetRoomsForEncoder(this->GetHandle())) {
+            if (Room.IsValid()) {
+                Rooms.Add(Room.Get());
+            }
+        }
+    }
+    return Rooms;
 }
 
 bool UOdinEncoder::SetAudioEventHandler(int EFilter)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(UOdinEncoder::SetAudioEventHandler);
-    const TWeakObjectPtr<UOdinEncoder> DataPtr = this;
+    uint64 RegistrationId = 0;
+    if (const UOdinSubsystem* OdinSubsystem = UOdinSubsystem::Get()) {
+        RegistrationId = OdinSubsystem->GetEncoderRegistrationId(this->GetHandle());
+    }
+    if (RegistrationId == 0) {
+        ODIN_LOG(Error, "Aborting SetAudioEventHandler, the encoder handle is not registered.");
+        return false;
+    }
+
     const auto Result = odin_encoder_set_event_callback(this->GetHandle(), static_cast<enum OdinAudioEvents>(EFilter), this->OdinEncoderEventCallbackFunc,
-                                                        DataPtr.IsValid() ? DataPtr.Get() : nullptr);
+                                                        reinterpret_cast<void*>(static_cast<UPTRINT>(RegistrationId)));
     if (Result != OdinError::ODIN_ERROR_SUCCESS) {
         FOdinModule::LogErrorCode("Aborting SetAudioEventHandler due to invalid odin_encoder_set_event_callback call: %s", Result);
         return false;
@@ -202,25 +290,22 @@ bool UOdinEncoder::SetAudioEventHandler(int EFilter)
     return true;
 }
 
-void UOdinEncoder::HandleOdinAudioEventCallback(OdinEncoder* EncoderHandle, const OdinAudioEvents Events, TWeakObjectPtr<UOdinEncoder> WeakEncoderPtr)
+void UOdinEncoder::HandleOdinAudioEventCallback(OdinEncoder* EncoderHandle, const OdinAudioEvents Events, const uint64 RegistrationId)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(UOdinEncoder::HandleOdinAudioEventCallback)
     auto filter = static_cast<EOdinAudioEvents>(Events);
-    ODIN_LOG(VeryVerbose, "Received HandleOdinAudioEventCallback for Encoder %p, Event: %s (%d)", EncoderHandle, *UEnum::GetValueAsString(filter), Events);
-    if (!WeakEncoderPtr.IsValid() || WeakEncoderPtr.IsStale(true, true)) {
-        ODIN_LOG(VeryVerbose, "HandleOdinAudioEventCallback is aborted, referenced Encoder UObject is not valid anymore for Encoder %p, Event: %s, (%d)",
-                 EncoderHandle, *UEnum::GetValueAsString(filter), Events);
+
+    if (RegistrationId == 0) {
         return;
     }
 
     FFunctionGraphTask::CreateAndDispatchWhenReady(
-        [EncoderHandle, WeakEncoderPtr, filter]() {
-            if (UOdinEncoder* EncoderPtr = WeakEncoderPtr.Get()) {
-                // it is possible to proxy a callback
-                if (const OdinEncoder* userDataHandle = EncoderPtr->GetHandle(); userDataHandle != EncoderHandle) {
-                    ODIN_LOG(Verbose, "Received missmatch Encoder %p != %p in HandleOdinAudioEventCallback. Redirect to %p", EncoderHandle, userDataHandle,
-                             userDataHandle);
-                }
+        [EncoderHandle, RegistrationId, filter]() {
+            const UOdinSubsystem* OdinSubsystem = UOdinSubsystem::Get();
+            if (OdinSubsystem == nullptr) {
+                return;
+            }
+            if (UOdinEncoder* EncoderPtr = OdinSubsystem->GetEncoderByRegistration(EncoderHandle, RegistrationId).Get()) {
                 if (EncoderPtr->OnAudioEventCallbackBP.IsBound()) {
                     EncoderPtr->OnAudioEventCallbackBP.Broadcast(EncoderPtr, filter);
                 }
@@ -233,39 +318,66 @@ void UOdinEncoder::SetAudioGenerator(UAudioGenerator* Generator)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(UOdinEncoder::SetAudioGenerator);
 
-    if (!Generator) {
-        ODIN_LOG(Error, "UOdinEncoder::SetAudioCapture - audio capture is null, microphone will "
-                        "not work.");
-    }
     if (IsValid(AudioGenerator)) {
         AudioGenerator->RemoveGeneratorDelegate(Audio_Generator_Handle);
     }
+    if (!Generator) {
+        ODIN_LOG(Error, "UOdinEncoder::SetAudioGenerator - audio generator is null, microphone "
+                        "will not work.");
+        this->AudioGenerator = nullptr;
+        return;
+    }
 
-    this->AudioGenerator    = Generator;
-    int32 CaptureSampleRate = AudioGenerator->GetSampleRate();
-    int32 CaptureChannels   = AudioGenerator->GetNumChannels();
-    int32 OdinSampleRate    = SampleRate;
-    int32 OdinChannels      = bStereo + 1;
+    this->AudioGenerator = Generator;
+    int32 OdinSampleRate = SampleRate;
+    int32 OdinChannels   = bStereo + 1;
 
-    TWeakObjectPtr<UOdinHandle>    WeakOdinHandle = Handle;
-    TWeakObjectPtr<UOdinSubsystem> SubsystemPtr   = UOdinSubsystem::Get();
+    TWeakObjectPtr<UOdinHandle>     WeakOdinHandle = Handle;
+    TWeakObjectPtr<UOdinSubsystem>  SubsystemPtr   = UOdinSubsystem::Get();
+    TWeakObjectPtr<UAudioGenerator> WeakGenerator  = Generator;
+    // resampler state shared with the capture callback, which runs on the capture thread only
+    TSharedPtr<FOdinStreamResampler, ESPMode::ThreadSafe> CaptureResampler = MakeShared<FOdinStreamResampler, ESPMode::ThreadSafe>();
+
     // Create generator delegate TFunction<void(const float *InAudio, int32 NumSamples)>
-    TFunction<void(const float* InAudio, int32 NumSamples)> audioGeneratorHandle = [CaptureSampleRate, CaptureChannels, OdinSampleRate, OdinChannels,
-                                                                                    WeakOdinHandle, SubsystemPtr](const float* InAudio, int32 NumSamples) {
+    TFunction<void(const float* InAudio, int32 NumSamples)> audioGeneratorHandle = [OdinSampleRate, OdinChannels, WeakOdinHandle, SubsystemPtr, WeakGenerator,
+                                                                                    CaptureResampler](const float* InAudio, int32 NumSamples) {
         TRACE_CPUPROFILER_EVENT_SCOPE(UOdinEncoder - Audio Generator Callback);
+
+        // read the generator's current format on every callback instead of the format snapshotted at registration time
+        const UAudioGenerator* Generator = WeakGenerator.Get();
+        if (Generator == nullptr) {
+            return;
+        }
+        const int32 CaptureSampleRate = Generator->GetSampleRate();
+        const int32 CaptureChannels   = Generator->GetNumChannels();
+        if (CaptureSampleRate <= 0 || CaptureChannels <= 0) {
+            return;
+        }
 
         const float* pbuffer   = InAudio;
         int32        bufferNum = NumSamples;
 
-        ODIN_LOG(VeryVerbose, "Encoder, stream: %d hz %d ch, capture: %d hz %d ch. ue-downmix: %d, odin-resample: %d", OdinSampleRate, OdinChannels,
+        ODIN_LOG(VeryVerbose, "Encoder, stream: %d hz %d ch, capture: %d hz %d ch. ue-downmix: %d, ue-resample: %d", OdinSampleRate, OdinChannels,
                  CaptureSampleRate, CaptureChannels, (OdinChannels != CaptureChannels), (OdinSampleRate != CaptureSampleRate));
 
-        // downmix channels
+        // convert channels; buffer must outlive the copy into the push queue below
+        TArray<float> ConvertedSamples;
         if (OdinChannels != CaptureChannels) {
-            Audio::TSampleBuffer<float> buffer(InAudio, NumSamples, CaptureChannels, CaptureSampleRate);
-            buffer.MixBufferToChannels(OdinChannels);
-            pbuffer   = buffer.GetData();
-            bufferNum = buffer.GetNumSamples();
+            ConvertChannelsInterleaved(InAudio, NumSamples, CaptureChannels, OdinChannels, ConvertedSamples);
+            pbuffer   = ConvertedSamples.GetData();
+            bufferNum = ConvertedSamples.Num();
+        }
+
+        // configure runs on every callback, so a device change during an equal-rate phase still resets the resampler state
+        CaptureResampler->Configure(CaptureSampleRate, OdinSampleRate, OdinChannels);
+        TArray<float> ResampledSamples;
+        if (OdinSampleRate != CaptureSampleRate) {
+            CaptureResampler->Process(pbuffer, bufferNum, ResampledSamples);
+            pbuffer   = ResampledSamples.GetData();
+            bufferNum = ResampledSamples.Num();
+            if (bufferNum == 0) {
+                return;
+            }
         }
 
         OdinEncoder* EncoderHandle = nullptr;
@@ -295,6 +407,17 @@ bool UOdinEncoder::SetPosition(FOdinChannelMask ChannelMask, FOdinPosition Posit
     }
 
     return false;
+}
+
+bool UOdinEncoder::SetPositions(const TArray<FOdinChannelPosition>& Positions)
+{
+    TRACE_CPUPROFILER_EVENT_SCOPE(UOdinEncoder::SetPositions);
+
+    bool bAllSucceeded = true;
+    for (const FOdinChannelPosition& Entry : Positions) {
+        bAllSucceeded &= SetPosition(Entry.ChannelMask, Entry.Position);
+    }
+    return bAllSucceeded;
 }
 
 bool UOdinEncoder::ClearPosition(FOdinChannelMask ChannelMask)
@@ -345,19 +468,29 @@ void UOdinEncoder::SetHandle(OdinEncoder* handle)
 {
     if (nullptr == handle) {
         if (IsValid(Handle)) {
+            if (UOdinSubsystem* const OdinSubsystem = UOdinSubsystem::Get()) {
+                OdinSubsystem->DeregisterEncoder(static_cast<OdinEncoder*>(Handle->GetHandle()));
+            }
             Handle->SetHandle(nullptr);
         }
         return;
     }
 
+    if (UOdinSubsystem* const OdinSubsystem = UOdinSubsystem::Get()) {
+        if (IsValid(Handle)) {
+            OdinSubsystem->DeregisterEncoder(static_cast<OdinEncoder*>(Handle->GetHandle()));
+        }
+    }
+
     this->Handle = NewObject<UOdinHandle>();
     this->Handle->SetHandle(handle);
+    if (UOdinSubsystem* const OdinSubsystem = UOdinSubsystem::Get()) {
+        OdinSubsystem->RegisterEncoder(handle, this);
+    }
 }
 
 int32 UOdinEncoder::Push(TArray<float> Samples)
-{
-    return Push(Samples.GetData(), Samples.Num());
-}
+{ return Push(Samples.GetData(), Samples.Num()); }
 
 void UOdinEncoder::SetEchoCancellationProcessingDelay(int32 DelayInMs)
 {
@@ -375,12 +508,62 @@ void UOdinEncoder::OnPipelineApmConfigChanged(UOdinPipeline* AffectedPipeline, i
     ODIN_LOG(Verbose, "Encoder Pipeline Apm Config Changed.");
     if (AffectedPipeline && SubmixListener.IsValid()) {
         if (NewApmConfig.echo_canceller) {
-            SubmixListener->AddEffectId(EffectId);
+            int32 PlaybackSampleRate = 48000;
+            bool  bPlaybackStereo    = true;
+            if (!AffectedPipeline->GetApmPlaybackFormat(EffectId, PlaybackSampleRate, bPlaybackStereo)) {
+                ODIN_LOG(Warning, "Unknown playback format for APM effect id %d, assuming %d hz %s.", EffectId, PlaybackSampleRate,
+                         bPlaybackStereo ? TEXT("stereo") : TEXT("mono"));
+            }
+            SubmixListener->AddEffectId(EffectId, PlaybackSampleRate, bPlaybackStereo);
 
         } else {
             SubmixListener->RemoveEffectId(EffectId);
         }
     }
+}
+
+void FOdinStreamResampler::Configure(const int32 InRate, const int32 OutRate, const int32 InChannels)
+{
+    if (InRate == InputRate && OutRate == OutputRate && InChannels == NumChannels) {
+        return;
+    }
+    InputRate   = InRate;
+    OutputRate  = OutRate;
+    NumChannels = InChannels;
+    Step        = OutRate > 0 ? static_cast<double>(InRate) / static_cast<double>(OutRate) : 1.0;
+    Phase       = 0.0;
+    LastFrame.Reset();
+    LastFrame.AddZeroed(InChannels);
+}
+
+void FOdinStreamResampler::Process(const float* InSamples, const uint32 NumSamples, TArray<float>& OutSamples)
+{
+    OutSamples.Reset();
+    if (NumChannels <= 0 || NumSamples < static_cast<uint32>(NumChannels)) {
+        return;
+    }
+    const int32 InFrames = NumSamples / NumChannels;
+    OutSamples.Reserve((static_cast<int32>(InFrames / Step) + 2) * NumChannels);
+
+    double Position = Phase;
+    while (true) {
+        const int32 Frame0 = FMath::FloorToInt32(Position);
+        const int32 Frame1 = Frame0 + 1;
+        if (Frame1 >= InFrames) {
+            break;
+        }
+        const float Frac = static_cast<float>(Position - Frame0);
+        for (int32 Channel = 0; Channel < NumChannels; ++Channel) {
+            const float Sample0 = Frame0 < 0 ? LastFrame[Channel] : InSamples[Frame0 * NumChannels + Channel];
+            const float Sample1 = InSamples[Frame1 * NumChannels + Channel];
+            OutSamples.Add(FMath::Lerp(Sample0, Sample1, Frac));
+        }
+        Position += Step;
+    }
+
+    Phase = Position - InFrames;
+    LastFrame.SetNumUninitialized(NumChannels);
+    FMemory::Memcpy(LastFrame.GetData(), InSamples + (InFrames - 1) * NumChannels, NumChannels * sizeof(float));
 }
 
 FOdinSubmixListener::FOdinSubmixListener()
@@ -400,21 +583,51 @@ void FOdinSubmixListener::OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, fl
                                             double AudioClock)
 {
     TRACE_CPUPROFILER_EVENT_SCOPE(FOdinSubmixListener::OnNewSubmixBuffer);
-    if (bIsListening && PipelineHandle.IsValid()) {
-        const OdinPipeline* OdinPipeline = PipelineHandle->GetHandle();
+    // held while the pipeline is used, so ClearPipelineHandle can wait for it before the encoder frees the pipeline
+    FScopeLock          PipelineAccessLock(&PipelineAccessSection);
+    const OdinPipeline* OdinPipeline = NativePipelineHandle.load();
+    if (bIsListening && OdinPipeline != nullptr) {
 
-        TArray<uint32> EffectIds;
         {
             FScopeLock EffectAccessLock(&EffectIdAccessSection);
-            EffectIds = ApmEffectIds;
+            EffectInfoScratch = ApmEffectIds;
         }
-        for (const uint32 EffectId : EffectIds) {
-            ODIN_LOG(VeryVerbose, "odin_pipeline_update_apm_playback called for EffectId %d, Num Samples %d, Delay %d", EffectId, NumSamples, DelayMs.load());
+        for (const FApmEffectInfo& EffectInfo : EffectInfoScratch) {
+            ODIN_LOG(VeryVerbose, "odin_pipeline_update_apm_playback called for EffectId %d, Num Samples %d, Delay %d", EffectInfo.EffectId, NumSamples,
+                     DelayMs.load());
             TRACE_CPUPROFILER_EVENT_SCOPE(FOdinSubmixListener::OnNewSubmixBuffer - odin_pipeline_update_apm_playback);
-            OdinError Result = odin_pipeline_update_apm_playback(OdinPipeline, EffectId, AudioData, NumSamples, DelayMs);
+
+            const float* PlaybackData    = AudioData;
+            uint32       PlaybackSamples = NumSamples;
+
+            if (EffectInfo.PlaybackChannels != NumChannels) {
+                ConvertChannelsInterleaved(PlaybackData, PlaybackSamples, NumChannels, EffectInfo.PlaybackChannels, ChannelScratch);
+                PlaybackData    = ChannelScratch.GetData();
+                PlaybackSamples = ChannelScratch.Num();
+            }
+
+            if (EffectInfo.PlaybackSampleRate != SampleRate) {
+                FOdinStreamResampler& Resampler = PlaybackResamplers.FindOrAdd(EffectInfo.EffectId);
+                Resampler.Configure(SampleRate, EffectInfo.PlaybackSampleRate, EffectInfo.PlaybackChannels);
+                Resampler.Process(PlaybackData, PlaybackSamples, ResampleScratch);
+                PlaybackData    = ResampleScratch.GetData();
+                PlaybackSamples = ResampleScratch.Num();
+                if (PlaybackSamples == 0) {
+                    continue; // the resampler has not accumulated enough input yet
+                }
+            }
+
+            OdinError Result = odin_pipeline_update_apm_playback(OdinPipeline, EffectInfo.EffectId, PlaybackData, PlaybackSamples, DelayMs);
             if (Result != OdinError::ODIN_ERROR_SUCCESS) {
                 ODIN_LOG(Error, "odin_pipeline_update_apm_playback failed, reason: %s",
                          *UOdinFunctionLibrary::FormatOdinError(static_cast<EOdinError>(Result), false));
+            }
+        }
+
+        for (auto It = PlaybackResamplers.CreateIterator(); It; ++It) {
+            const uint32 EffectId = It.Key();
+            if (!EffectInfoScratch.ContainsByPredicate([EffectId](const FApmEffectInfo& Info) { return Info.EffectId == EffectId; })) {
+                It.RemoveCurrent();
             }
         }
     }
@@ -423,8 +636,17 @@ void FOdinSubmixListener::OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, fl
 void FOdinSubmixListener::SetPipelineHandle(UOdinPipeline* NewHandle)
 {
     if (NewHandle) {
-        PipelineHandle = NewHandle;
+        NativePipelineHandle = NewHandle->GetHandle();
     }
+}
+
+void FOdinSubmixListener::ClearPipelineHandle()
+{
+    FScopeLock PipelineAccessLock(&PipelineAccessSection);
+    NativePipelineHandle = nullptr;
+
+    FScopeLock EffectAccessLock(&EffectIdAccessSection);
+    ApmEffectIds.Empty();
 }
 
 void FOdinSubmixListener::AttachToSubmix()
@@ -455,14 +677,19 @@ void FOdinSubmixListener::AttachToSubmix()
     }
 }
 
-void FOdinSubmixListener::AddEffectId(const uint32 EffectId)
+void FOdinSubmixListener::AddEffectId(const uint32 EffectId, const int32 PlaybackSampleRate, const bool bPlaybackStereo)
 {
+    FApmEffectInfo EffectInfo;
+    EffectInfo.EffectId           = EffectId;
+    EffectInfo.PlaybackSampleRate = PlaybackSampleRate;
+    EffectInfo.PlaybackChannels   = bPlaybackStereo ? 2 : 1;
+
     int32 NumApmEffects;
     {
         FScopeLock EffectAccessLock(&EffectIdAccessSection);
-        if (!ApmEffectIds.Contains(EffectId)) {
-            ODIN_LOG(Log, "Added effect id %d", EffectId);
-            ApmEffectIds.AddUnique(EffectId);
+        if (!ApmEffectIds.Contains(EffectInfo)) {
+            ODIN_LOG(Log, "Added effect id %d with playback format %d hz %d ch", EffectId, PlaybackSampleRate, EffectInfo.PlaybackChannels);
+            ApmEffectIds.AddUnique(EffectInfo);
         }
         NumApmEffects = ApmEffectIds.Num();
     }
@@ -509,7 +736,7 @@ void FOdinSubmixListener::RemoveEffectId(const uint32 EffectId)
     int32 NumApmEffects;
     {
         FScopeLock EffectAccessLock(&EffectIdAccessSection);
-        int32      NumRemovedEffects = ApmEffectIds.Remove(EffectId);
+        int32      NumRemovedEffects = ApmEffectIds.RemoveAll([EffectId](const FApmEffectInfo& Info) { return Info.EffectId == EffectId; });
         if (NumRemovedEffects > 0) {
             ODIN_LOG(Log, "Removed effect id %d", EffectId);
         }
@@ -521,9 +748,7 @@ void FOdinSubmixListener::RemoveEffectId(const uint32 EffectId)
 }
 
 void FOdinSubmixListener::SetDelay(int32 NewDelayInMs)
-{
-    DelayMs = NewDelayInMs;
-}
+{ DelayMs = NewDelayInMs; }
 
 int32 FOdinSubmixListener::GetNumEffectsRegistered() const
 {

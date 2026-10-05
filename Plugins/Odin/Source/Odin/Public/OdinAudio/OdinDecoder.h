@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #pragma once
 
@@ -13,6 +13,15 @@
 #include "UObject/StrongObjectPtr.h"
 
 #include "OdinDecoder.generated.h"
+
+/**
+ * The native decoder handle as used by sound generators on the audio render thread. They hold the lock while popping,
+ * so the decoder can clear the handle and free the native decoder without pulling it out from under them.
+ */
+struct FOdinDecoderHandleCell {
+    FCriticalSection Lock;
+    OdinDecoder     *Handle = nullptr;
+};
 
 /**
  * Represents a decoder for media streams from remote voice chat clients, which encapsulates all
@@ -148,7 +157,7 @@ class ODIN_API UOdinDecoder : public UObject
     UOdinPipeline *Pipeline = nullptr;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Odin|Channels")
-    FOdinChannelMask ChannelMask;
+    FOdinChannelMask ChannelMask = FOdinChannelMask::CreateFull();
 
     UPROPERTY(BlueprintReadOnly, Category = "Odin")
     int32 SampleRate = 48000;
@@ -161,14 +170,10 @@ class ODIN_API UOdinDecoder : public UObject
      * @return incomplete handle type or nullptr
      */
     inline OdinDecoder *GetNativeHandle() const
-    {
-        return IsValid(Handle) && Handle->IsValidLowLevel() ? reinterpret_cast<OdinDecoder *>(Handle->GetHandle()) : nullptr;
-    }
+    { return IsValid(Handle) && Handle->IsValidLowLevel() ? reinterpret_cast<OdinDecoder *>(Handle->GetHandle()) : nullptr; }
 
     TWeakObjectPtr<UOdinHandle> GetHandle() const
-    {
-        return Handle;
-    }
+    { return Handle; }
 
     /**
      * Replace internal handle object
@@ -176,11 +181,19 @@ class ODIN_API UOdinDecoder : public UObject
      */
     void SetHandle(OdinDecoder *NewHandle);
 
+    TSharedRef<FOdinDecoderHandleCell, ESPMode::ThreadSafe> GetHandleCell() const
+    { return HandleCell; }
+
   protected:
     virtual void BeginDestroy() override;
 
   private:
+    /** Detaches sound generators and the pipeline wrapper before the native decoder is freed. */
+    void ReleaseNativeReferences();
+
     UPROPERTY()
     UOdinHandle *Handle;
-    static void  HandleOdinAudioEventCallback(OdinDecoder *DecoderHandle, const OdinAudioEvents Events, TWeakObjectPtr<UObject> UserData = nullptr);
+
+    TSharedRef<FOdinDecoderHandleCell, ESPMode::ThreadSafe> HandleCell = MakeShared<FOdinDecoderHandleCell, ESPMode::ThreadSafe>();
+    static void HandleOdinAudioEventCallback(OdinDecoder *DecoderHandle, const OdinAudioEvents Events, TWeakObjectPtr<UObject> UserData = nullptr);
 };

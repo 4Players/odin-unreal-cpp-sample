@@ -1,4 +1,4 @@
-﻿/* Copyright (c) 2022-2023 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #pragma once
 
@@ -47,7 +47,11 @@ class ODIN_API UOdinFunctionLibrary : public UBlueprintFunctionLibrary
     static UOdinEncoder* CreateOdinEncoderFromGenerator(UObject* WorldContextObject, UPARAM(ref) UOdinRoom*& OdinRoom,
                                                         UPARAM(ref) UAudioGenerator*& AudioGenerator);
 
+    UFUNCTION(BlueprintCallable, Category = "Odin|Encoder", meta = (ToolTip = "Links an encoder to a room. Audio from the encoder will be sent to the room."))
     static void LinkEncoderToRoom(UOdinEncoder* Encoder, UOdinRoom* Room);
+
+    UFUNCTION(BlueprintCallable, Category = "Odin|Encoder",
+              meta = (ToolTip = "Unlinks an encoder from a room. Audio from the encoder will no longer be sent to the room."))
     static void UnlinkEncoderFromRoom(UOdinEncoder* Encoder);
 
     UFUNCTION(BlueprintCallable,
@@ -57,7 +61,7 @@ class ODIN_API UOdinFunctionLibrary : public UBlueprintFunctionLibrary
 
     UFUNCTION(BlueprintPure,
               meta     = (DisplayName = "Get Decoders for Peer",
-                      ToolTip     = "Retrieves all decoders that have been registered for this room with the given peer id."),
+                          ToolTip     = "Retrieves all decoders that have been registered for this room with the given peer id."),
               Category = "Odin|Audio Pipeline")
     static TArray<UOdinDecoder*> GetDecodersForPeer(UOdinRoom* Room, int64 PeerId);
 
@@ -69,7 +73,7 @@ class ODIN_API UOdinFunctionLibrary : public UBlueprintFunctionLibrary
      */
     UFUNCTION(BlueprintCallable,
               meta     = (DisplayName = "Deregister Decoder From All", ToolTip = "Deregisters a Decoder from all connections it receives audio from.",
-                      Keywords = "Unlink"),
+                          Keywords = "Unlink"),
               Category = "Odin|Audio Pipeline")
     static void DeregisterDecoderFromAllConnections(UOdinDecoder* Decoder);
 
@@ -107,7 +111,14 @@ class ODIN_API UOdinFunctionLibrary : public UBlueprintFunctionLibrary
     UFUNCTION(BlueprintPure, Category = "Odin|Channels")
     static bool IsChannelEnabledInMask(const FOdinChannelMask& Mask, const int32 ChannelIndex);
 
-    UFUNCTION(BlueprintCallable, Category = "Odin|Channels", meta = (Keywords = "Make Full Channel Mask"))
+    /**
+     * Creates a mask with all 64 channels enabled.
+     * @remarks Do not use a full mask for Set Encoder Position: an encoder holds at most 12 channel positions, so a full mask fails with
+     * ODIN_ERROR_AUDIO_POSITION_LIMIT_REACHED. Mask only the channels that are actually transmitted on (usually just channel 0).
+     */
+    UFUNCTION(BlueprintCallable, Category = "Odin|Channels",
+              meta = (Keywords = "Make Full Channel Mask",
+                      ToolTip  = "Creates a mask with all 64 channels enabled. Not for Set Encoder Position - an encoder holds at most 12 positions"))
     static FOdinChannelMask CreateFullMask();
 
     UFUNCTION(BlueprintCallable, Category = "Odin|Channels", meta = (Keywords = "Make Empty Channel Mask"))
@@ -116,4 +127,7 @@ class ODIN_API UOdinFunctionLibrary : public UBlueprintFunctionLibrary
     UFUNCTION(BlueprintPure, Category = "Odin|Audio Pipeline|Events", meta = (CompactNodeTitle = "In Filter"), meta = (Keywords = "Audio Event Filter"))
     static bool DoesAudioEventMatchFilter(EOdinAudioEvents                                                                                      Event,
                                           UPARAM(meta = (DisplayName = "Filter", Bitmask, BitmaskEnum = "/Script/Odin.EOdinAudioEvents")) int32 Filter);
+
+    UFUNCTION(BlueprintPure, Category = "Odin|Debug", meta = (Keywords = "debug dump state"))
+    static FString OdinDebugDumpState();
 };
