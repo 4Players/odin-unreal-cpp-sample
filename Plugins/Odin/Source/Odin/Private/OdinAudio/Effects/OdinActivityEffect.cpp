@@ -1,13 +1,11 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinAudio/Effects/OdinActivityEffect.h"
 #include "Async/TaskGraphInterfaces.h"
 
 UOdinActivityEffect::UOdinActivityEffect(const FObjectInitializer &PCIP)
     : Super(PCIP)
-{
-    UserData = TOdinCustomEffectUserData(this);
-}
+{ UserData = TOdinCustomEffectUserData(this); }
 
 void UOdinActivityEffect::CustomEffect(const TArrayView<float> &InSamples, bool *&bIsSilent,
                                        TOdinCustomEffectUserData<UOdinCustomEffect> *const InUserData) const

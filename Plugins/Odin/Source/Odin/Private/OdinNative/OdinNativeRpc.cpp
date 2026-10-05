@@ -1,6 +1,9 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinNative/OdinNativeRpc.h"
+
+// event
+const FString FOdinError::Name = FString("Error");
 
 // event response
 const FString FOdinRoomStatusChanged::Name = FString("RoomStatusChanged");
@@ -11,7 +14,7 @@ const FString FOdinPeerJoined::Name        = FString("PeerJoined");
 const FString FOdinPeerChanged::Name       = FString("PeerChanged");
 const FString FOdinPeerLeft::Name          = FString("PeerLeft");
 
-//
+// status
 const FString FOdinRoomStatusChanged::JoinedStatus  = FString("joined");
 const FString FOdinRoomStatusChanged::ClosedStatus  = FString("closed");
 const FString FOdinRoomStatusChanged::JoiningStatus = FString("joining");

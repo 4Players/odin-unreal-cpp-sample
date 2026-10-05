@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 #pragma once
 
 #include "CoreMinimal.h"
@@ -57,14 +57,10 @@ class ODIN_API UOdinCustomEffect : public UObject
     virtual void CustomEffect(const TArrayView<float>& InSamples, bool*& bIsSilent, TOdinCustomEffectUserData<UOdinCustomEffect>* const InUserData) const;
 
     inline TWeakObjectPtr<UOdinPipeline> GetParent() const
-    {
-        return this->Pipeline;
-    }
+    { return this->Pipeline; }
 
     inline void SetParent(TWeakObjectPtr<UOdinPipeline> InPipeline)
-    {
-        this->Pipeline = InPipeline;
-    }
+    { this->Pipeline = InPipeline; }
 
     UFUNCTION(BlueprintCallable, meta = (DisplayName = "Detach Effect", ToolTip = "Try to remove this effect from parent pipeline"),
               Category = "Odin|Audio Pipeline")

@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinAudio/OdinSynthComponent.h"
 
@@ -50,14 +50,10 @@ ISoundGeneratorPtr UOdinSynthComponent::CreateSoundGenerator(const FSoundGenerat
 }
 
 UOdinDecoder* UOdinSynthComponent::GetDecoder() const
-{
-    return Decoder;
-}
+{ return Decoder; }
 
 UAudioComponent* UOdinSynthComponent::GetConnectedAudioComponent()
-{
-    return GetAudioComponent();
-}
+{ return GetAudioComponent(); }
 
 void UOdinSynthComponent::SetDecoder(UOdinDecoder* InDecoder)
 {

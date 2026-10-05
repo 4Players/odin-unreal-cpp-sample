@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #pragma once
 
@@ -7,7 +7,6 @@
 #include "OdinAudio/OdinDatagramProcessingThread.h"
 #include "OdinCore/include/odin.h"
 #include "Subsystems/EngineSubsystem.h"
-#include "OdinAudio/OdinDecoder.h"
 
 #include "OdinSubsystem.generated.h"
 
@@ -36,10 +35,37 @@ class ODIN_API UOdinSubsystem : public UEngineSubsystem
     virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     virtual void Deinitialize() override;
 
+    /**
+     * Rooms owned by a world that is torn down would be garbage collected without ever leaving
+     * gracefully, and their peer left events would reach nobody. Reports the announced peers of
+     * every registered room of that world as left while its actors are still alive and starts a
+     * graceful close, so our own peer leaves the server before the world goes away.
+     */
+    void OnWorldBeginTearDown(UWorld* World);
+
     void                              LinkEncoder(TWeakObjectPtr<UOdinEncoder> Encoder, TWeakObjectPtr<UOdinRoom> TargetRoom);
     void                              UnlinkEncoder(TWeakObjectPtr<UOdinEncoder> Encoder);
     void                              UnlinkEncoder(OdinEncoder* Encoder);
     void                              PushAudioToEncoder(OdinEncoder* Encoder, TArray<float>&& Audio);
+    TArray<TWeakObjectPtr<UOdinRoom>> GetRoomsForEncoder(OdinEncoder* Encoder) const;
+    void                              RegisterEncoder(OdinEncoder* Handle, UOdinEncoder* Encoder);
+    void                              DeregisterEncoder(OdinEncoder* Handle);
+    /**
+     * Resolves the owning encoder UObject for a native handle. Used by native callbacks that may
+     * only carry the handle across threads and resolve the UObject on the game thread.
+     */
+    TWeakObjectPtr<UOdinEncoder> GetEncoderByHandle(OdinEncoder* Handle) const;
+    /**
+     * Registration id of the handle's current registry entry, 0 if not registered. Safe to call
+     * from any thread; only registry data is touched, no UObjects.
+     */
+    uint64 GetEncoderRegistrationId(OdinEncoder* Handle) const;
+    /**
+     * Resolves the owning encoder UObject only if the handle is still registered under the given
+     * registration id, so deferred events for a freed handle cannot reach a new encoder that
+     * happens to reuse the same handle value.
+     */
+    TWeakObjectPtr<UOdinEncoder>      GetEncoderByRegistration(OdinEncoder* Handle, uint64 RegistrationId) const;
     void                              RegisterRoom(OdinRoom* Handle, UOdinRoom* Room);
     void                              DeregisterRoom(OdinRoom* Handle);
     void                              SwapRoomHandle(OdinRoom* OldHandle, OdinRoom* NewHandle);
@@ -53,7 +79,11 @@ class ODIN_API UOdinSubsystem : public UEngineSubsystem
     void                  DeregisterDecoder(const UOdinDecoder* OdinDecoder);
     void                  DeregisterDecoder(const OdinDecoder* Handle);
     TArray<OdinDecoder*>  GetDecoderHandlesFor(OdinRoom* TargetRoom, uint32 PeerId) const;
+    TArray<OdinDecoder*>  GetDecoderHandlesFor(OdinRoom* TargetRoom, uint32 PeerId, uint64 ChannelMask) const;
     TArray<UOdinDecoder*> GetDecodersFor(OdinRoom* TargetRoom, uint32 PeerId) const;
+    TArray<UOdinDecoder*> GetDecodersFor(OdinRoom* TargetRoom, uint32 PeerId, uint64 ChannelMask) const;
+    TArray<OdinDecoder*>  GetAllDecoderHandlesByPeer(uint32 PeerId) const;
+    TArray<UOdinDecoder*> GetAllDecodersByPeer(uint32 PeerId) const;
 
     void HandleDatagram(OdinRoom* RoomHandle, uint32 PeerId, uint64 ChannelMask, uint32 SsrcId, TArray<uint8>&& Datagram);
 
@@ -63,7 +93,15 @@ class ODIN_API UOdinSubsystem : public UEngineSubsystem
 
     mutable FCriticalSection                         DecoderObjectsCS;
     TMap<OdinDecoder*, TWeakObjectPtr<UOdinDecoder>> DecoderObjects;
+    struct FRegisteredEncoder {
+        TWeakObjectPtr<UOdinEncoder> Encoder;
+        uint64                       RegistrationId = 0;
+    };
+    mutable FCriticalSection               EncoderObjectsCS;
+    TMap<OdinEncoder*, FRegisteredEncoder> EncoderObjects;
+    uint64                                 EncoderRegistrationCounter = 0; // guarded by EncoderObjectsCS
 
     TUniquePtr<FOdinAudioPushDataThread>      PushDataThread;
     TUniquePtr<FOdinDatagramProcessingThread> DatagramProcessingThread;
+    FDelegateHandle                           WorldTearDownHandle;
 };

@@ -1,6 +1,8 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinAudio/Effects/OdinMuteEffect.h"
+
+#include "OdinVoice.h"
 
 UOdinMuteEffect::UOdinMuteEffect(const FObjectInitializer &PCIP)
     : Super(PCIP)
@@ -20,7 +22,7 @@ void UOdinMuteEffect::CustomEffect(const TArrayView<float> &InSamples, bool *&bI
     if (GetParent().IsValid() == false)
         return;
 
-    *bIsSilent = MuteFlag == EOdinMuteEffectOptions::ODIN_EFFECT_TOGGLE_ON ? true : false;
+    *bIsSilent = *bIsSilent || MuteFlag == EOdinMuteEffectOptions::ODIN_EFFECT_TOGGLE_ON;
 }
 
 UOdinMuteEffect *UOdinMuteEffect::ConstructMuteEffect(UObject *WorldContextObject, EOdinMuteEffectOptions Toggle)
@@ -31,6 +33,4 @@ UOdinMuteEffect *UOdinMuteEffect::ConstructMuteEffect(UObject *WorldContextObjec
 }
 
 void UOdinMuteEffect::BeginDestroy()
-{
-    Super::BeginDestroy();
-}
+{ Super::BeginDestroy(); }

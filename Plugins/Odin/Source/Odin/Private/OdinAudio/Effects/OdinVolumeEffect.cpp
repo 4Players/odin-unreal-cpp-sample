@@ -1,12 +1,10 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 
 #include "OdinAudio/Effects/OdinVolumeEffect.h"
 
 UOdinVolumeEffect::UOdinVolumeEffect(const FObjectInitializer &PCIP)
     : Super(PCIP)
-{
-    UserData = TOdinCustomEffectUserData(this);
-}
+{ UserData = TOdinCustomEffectUserData(this); }
 
 void UOdinVolumeEffect::CustomEffect(const TArrayView<float> &InSamples, bool *&bIsSilent, TOdinCustomEffectUserData<UOdinCustomEffect> *const InUSerData) const
 {
@@ -20,14 +18,14 @@ void UOdinVolumeEffect::CustomEffect(const TArrayView<float> &InSamples, bool *&
     if (*bIsSilent)
         return;
 
-    // scale close to silence
-    if (FMath::IsNearlyEqual(SampleScale, 0.0, 0.001)) {
+    // decibels to linear gain, or a linear scale raised to the exponent
+    float bufferScale = VolumeLog10 ? FMath::Pow(10.0f, SampleScale / 20.0f) : FMath::Pow(SampleScale, ScaleExponent);
+
+    // gain close to silence
+    if (FMath::IsNearlyEqual(bufferScale, 0.0f, 0.001f)) {
         *bIsSilent = true;
         return;
     }
-
-    // Log10(2.0)*20 || 2.0 ^ 1.0
-    float bufferScale = VolumeLog10 ? FMath::LogX(10, SampleScale) * 20.0 : FMath::Pow(SampleScale, ScaleExponent);
 
     for (int32 i = 0; i < InSamples.Num(); i++)
         InSamples[i] *= bufferScale;
@@ -41,6 +39,4 @@ UOdinVolumeEffect *UOdinVolumeEffect::ConstructVolumeEffect(UObject *WorldContex
 }
 
 void UOdinVolumeEffect::BeginDestroy()
-{
-    Super::BeginDestroy();
-}
+{ Super::BeginDestroy(); }

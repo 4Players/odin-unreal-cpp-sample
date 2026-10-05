@@ -1,17 +1,25 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 #pragma once
 
 #include "OdinChannelMask.generated.h"
 
 USTRUCT(BlueprintType)
-struct FOdinChannelMask {
+struct ODIN_API FOdinChannelMask {
     GENERATED_BODY()
 
     FOdinChannelMask();
 
     FOdinChannelMask(uint64 InitialMask);
 
+    /**
+     * Creates a mask with all 64 channels enabled.
+     * @remarks Do not pass a full mask to UOdinEncoder::SetPosition: an encoder can only hold
+     * positions for 12 channels, so setting a position for all 64 channels fails with
+     * ODIN_ERROR_AUDIO_POSITION_LIMIT_REACHED. Build a mask containing just the channels that are
+     * actually transmitted on instead (usually only channel 0).
+     */
     static FOdinChannelMask CreateFull();
+    /** Creates a mask with no channels enabled. */
     static FOdinChannelMask CreateEmpty();
 
     bool operator[](int32 index) const
@@ -22,9 +30,7 @@ struct FOdinChannelMask {
     }
 
     operator uint64() const
-    {
-        return ChannelMask;
-    }
+    { return ChannelMask; }
 
     bool   IsSet(uint64 mask) const;
     uint64 Set(int32 index, bool set);

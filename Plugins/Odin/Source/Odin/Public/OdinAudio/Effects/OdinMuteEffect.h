@@ -1,4 +1,4 @@
-/* Copyright (c) 2022-2025 4Players GmbH. All rights reserved. */
+/* Copyright (c) 2020-2026 4Players GmbH. All rights reserved. */
 #pragma once
 
 #include "OdinCustomEffect.h"
@@ -40,7 +40,7 @@ class ODIN_API UOdinMuteEffect : public UOdinCustomEffect
                                                 EOdinMuteEffectOptions Toggle = EOdinMuteEffectOptions::ODIN_EFFECT_TOGGLE_UNCHANGED);
 
     UPROPERTY(BlueprintReadWrite, Category = "Odin|Audio Pipeline|State")
-    EOdinMuteEffectOptions                     MuteFlag;
+    EOdinMuteEffectOptions                     MuteFlag = EOdinMuteEffectOptions::ODIN_EFFECT_TOGGLE_UNCHANGED;
     TOdinCustomEffectUserData<UOdinMuteEffect> UserData;
 
   private:
